@@ -55,6 +55,8 @@ export default function Home() {
   const [portfolioRange, setPortfolioRange] = useState("3개월");
   const [marketTick, setMarketTick] = useState(0);
   const [lastSampleUpdate, setLastSampleUpdate] = useState("—");
+  const [analysisCount, setAnalysisCount] = useState(0);
+  const [analysisTime, setAnalysisTime] = useState("방금 전");
 
   useEffect(() => {
     const update = () => { setMarketTick(value => value + 1); setLastSampleUpdate(new Date().toLocaleTimeString("ko-KR", { hour12: false })); };
@@ -83,6 +85,16 @@ export default function Home() {
     setSimulated(false);
     setQuery("");
     setSearchOpen(false);
+  }
+
+  function runAiAnalysis() {
+    const adjustment = (analysisCount % 3) * .002;
+    setEntry(Math.round(selected.price * (.982 + adjustment) / 100) * 100);
+    setStop(Math.round(selected.price * (.935 + adjustment / 2) / 100) * 100);
+    setTarget(Math.round(selected.price * (1.085 + adjustment) / 100) * 100);
+    setAnalysisCount(value => value + 1);
+    setAnalysisTime(new Date().toLocaleTimeString("ko-KR", { hour: "2-digit", minute: "2-digit", hour12: false }));
+    setSimulated(false);
   }
 
   return (
@@ -147,13 +159,25 @@ export default function Home() {
           <div className="order-panel panel">
             <div className="section-title"><div><span className="ai-label">AI PLAN</span><h2>{selected.name} 자동 주문</h2></div><div className="confidence"><span>{selected.confidence}%</span> 신뢰도</div></div>
             <div className="tabs"><button className={mode === "ai" ? "active" : ""} onClick={() => setMode("ai")}>AI 추천</button><button className={mode === "rule" ? "active" : ""} onClick={() => setMode("rule")}>직접 설정</button></div>
-            <div className="ai-note"><span>✦</span><p>{mode === "ai" ? "단기 지지 구간과 거래량 회복 신호를 기반으로 한 스윙 전략이에요." : "입력한 가격에 도달하면 설정된 조건으로 모의 주문을 실행해요."}</p></div>
-            <div className="input-grid">
-              <label>투자 금액<div><input value={capital} onChange={e=>setCapital(Number(e.target.value))}/><span>원</span></div></label>
-              <label>매수 기준가<div><input value={entry} onChange={e=>setEntry(Number(e.target.value))}/><span>원</span></div></label>
-              <label>손절가<div className="loss"><input value={stop} onChange={e=>setStop(Number(e.target.value))}/><span>원</span></div></label>
-              <label>익절가<div className="gain"><input value={target} onChange={e=>setTarget(Number(e.target.value))}/><span>원</span></div></label>
-            </div>
+            {mode === "ai" ? <div className="ai-recommendation">
+              <div className="ai-note"><span>✦</span><p><b>단기 스윙 전략</b> · 지지 구간과 거래량 회복 신호를 조합해 Dehua가 계산한 추천안이에요.</p></div>
+              <div className="ai-plan-head"><span><i /> 분석 완료 · {analysisTime}</span><button onClick={runAiAnalysis}>↻ 다시 분석</button></div>
+              <div className="ai-price-grid">
+                <div><small>추천 매수가</small><strong>{entry.toLocaleString()}원</strong><em>현재가 대비 -1.8%</em></div>
+                <div className="loss"><small>자동 손절</small><strong>{stop.toLocaleString()}원</strong><em>위험 제한 -4.8%</em></div>
+                <div className="gain"><small>1차 목표가</small><strong>{target.toLocaleString()}원</strong><em>예상 상승 +8.5%</em></div>
+              </div>
+              <div className="ai-reasons"><span>거래량 회복 <b>강함</b></span><span>단기 추세 <b>상승</b></span><span>변동성 <b>보통</b></span></div>
+              <div className="ai-allocation"><span>추천 투자금액</span><strong>{capital.toLocaleString()}원 · {quantity}주</strong></div>
+            </div> : <>
+              <div className="ai-note manual"><span>⌁</span><p>원하는 가격과 투자 금액을 직접 입력하면 해당 조건으로 모의 주문을 실행해요.</p></div>
+              <div className="input-grid">
+                <label>투자 금액<div><input value={capital} onChange={e=>setCapital(Number(e.target.value))}/><span>원</span></div></label>
+                <label>매수 기준가<div><input value={entry} onChange={e=>setEntry(Number(e.target.value))}/><span>원</span></div></label>
+                <label>손절가<div className="loss"><input value={stop} onChange={e=>setStop(Number(e.target.value))}/><span>원</span></div></label>
+                <label>익절가<div className="gain"><input value={target} onChange={e=>setTarget(Number(e.target.value))}/><span>원</span></div></label>
+              </div>
+            </>}
             <div className="summary"><div><small>예상 수량</small><strong>{quantity}주</strong></div><div><small>최대 예상 손실</small><strong className="red">-{won(risk*quantity)}</strong></div><div><small>손익비</small><strong>1 : {ratio}</strong></div></div>
             <button className="simulate" onClick={() => setSimulated(true)}>{simulated ? "✓ 전략 시뮬레이션 완료" : "이 전략 시뮬레이션하기"}</button>
             <p className="disclaimer">실제 주문이 아닌 모의 거래입니다. AI 분석은 수익을 보장하지 않습니다.</p>
