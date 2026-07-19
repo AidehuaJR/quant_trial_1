@@ -24,29 +24,37 @@ function roundPrice(value: number) { return Math.round(value / 100) * 100; }
 
 function sampleBars(base: number, code: string, range: RangeKey, minutes: Interval): Bar[] {
   const { days } = configs[range];
+  const loadedDays = range === "1일" ? 30 : range === "3일" ? 30 : range === "1주" ? 45 : days;
   const seed = Number(code.slice(-3)) || 41;
-  // Fixed Friday snapshot: charts remain visible after hours and on weekends.
-  const end = new Date("2026-07-17T06:20:00Z"); // 15:20 KST
+  // Fixed Friday snapshot: includes NXT after-market and remains visible on weekends.
+  const end = new Date("2026-07-17T11:00:00Z"); // 20:00 KST
   const result: Bar[] = [];
   let close = base * (range === "1년" ? .72 : range === "3개월" ? .86 : .96);
   let index = 0;
 
   if (minutes <= 720) {
-    for (let dayOffset = days - 1; dayOffset >= 0; dayOffset--) {
+    for (let dayOffset = loadedDays - 1; dayOffset >= 0; dayOffset--) {
       const session = new Date(end);
       session.setUTCDate(end.getUTCDate() - dayOffset);
       if (session.getUTCDay() === 0 || session.getUTCDay() === 6) continue;
-      const start = new Date(Date.UTC(session.getUTCFullYear(), session.getUTCMonth(), session.getUTCDate(), 0, 0)); // 09:00 KST
-      for (let minute = 0; minute <= 380; minute += minutes) {
-        const time = new Date(start.getTime() + minute * 60_000);
-        const wave = Math.sin((index + seed) * .47) * .0035 + Math.cos((index + seed) * .17) * .002;
-        const drift = (base - close) * .018;
-        const open = close;
-        close = Math.max(base * .82, close * (1 + wave) + drift);
-        const high = Math.max(open, close) * (1.002 + Math.abs(Math.sin(index)) * .0015);
-        const low = Math.min(open, close) * (0.998 - Math.abs(Math.cos(index)) * .0013);
-        result.push({ time: Math.floor(time.getTime()/1000) as UTCTimestamp, open: roundPrice(open), high: roundPrice(high), low: roundPrice(low), close: roundPrice(close), volume: Math.round(85000 + Math.abs(Math.sin(index*.61))*420000) });
-        index++;
+      const y = session.getUTCFullYear(), m = session.getUTCMonth(), d = session.getUTCDate();
+      const segments = [
+        { start: Date.UTC(y, m, d - 1, 23, 0), duration: 50, name: "NXT 프리" },      // 08:00–08:50 KST
+        { start: Date.UTC(y, m, d, 0, 0), duration: 390, name: "정규장" },            // 09:00–15:30 KST
+        { start: Date.UTC(y, m, d, 6, 40), duration: 260, name: "NXT 애프터" },       // 15:40–20:00 KST
+      ];
+      for (const segment of segments) {
+        for (let minute = 0; minute <= segment.duration; minute += minutes) {
+          const time = new Date(segment.start + minute * 60_000);
+          const wave = Math.sin((index + seed) * .47) * .0035 + Math.cos((index + seed) * .17) * .002;
+          const drift = (base - close) * .018;
+          const open = close;
+          close = Math.max(base * .82, close * (1 + wave) + drift);
+          const high = Math.max(open, close) * (1.002 + Math.abs(Math.sin(index)) * .0015);
+          const low = Math.min(open, close) * (0.998 - Math.abs(Math.cos(index)) * .0013);
+          result.push({ time: Math.floor(time.getTime()/1000) as UTCTimestamp, open: roundPrice(open), high: roundPrice(high), low: roundPrice(low), close: roundPrice(close), volume: Math.round(85000 + Math.abs(Math.sin(index*.61))*420000) });
+          index++;
+        }
       }
     }
   }
@@ -125,8 +133,9 @@ export default function MarketChart({ name, code, price, entry, stop, target }: 
 
   const shown = detail;
   return <article className="market-chart panel">
-    <div className="chart-head"><div><span className="sample-pill">INTERACTIVE SAMPLE</span><h2>{name} <small>{code}</small></h2><strong>{price.toLocaleString("ko-KR")}원</strong><em>사용자 제공 기준값 · 실시간 아님</em></div><div><div className="chart-tools"><div className="ranges">{ranges.map(item=><button key={item} className={range===item?"active":""} onClick={()=>{setRange(item);setInterval(configs[item].defaultInterval);setDetail(null)}}>{item}</button>)}</div><button className={`refresh-chart ${refreshing ? "loading" : ""}`} onClick={refreshChart} disabled={refreshing} aria-label="차트 새로고침"><span>↻</span>{refreshing ? "불러오는 중" : "새로고침"}</button></div><p className="interval-label"><i className="connection-dot"/> SIMULATED · Last updated {lastUpdated} · 휠로 확대 · 드래그로 이동</p></div></div>
-    <div className="candle-toolbar"><label htmlFor="candle-interval">봉 간격</label><div className="interval-select"><select id="candle-interval" value={interval} onChange={event=>{setInterval(Number(event.target.value) as Interval);setDetail(null)}}>{intervals.map(item=><option key={item.value} value={item.value}>{item.label}</option>)}</select><span>⌄</span></div><i>약 30개 봉으로 시작</i><small>확대·축소하면 선택 기간의 나머지 데이터를 볼 수 있어요.</small></div>
+    <div className="chart-head"><div><span className="sample-pill">INTERACTIVE SAMPLE</span><h2>{name} <small>{code}</small></h2><strong>{price.toLocaleString("ko-KR")}원</strong><em>사용자 제공 기준값 · 실시간 아님</em></div><div><div className="chart-tools"><div className="ranges">{ranges.map(item=><button key={item} className={range===item?"active":""} onClick={()=>{setRange(item);setInterval(configs[item].defaultInterval);setDetail(null)}}>{item}</button>)}</div><button className={`refresh-chart ${refreshing ? "loading" : ""}`} onClick={refreshChart} disabled={refreshing} aria-label="차트 새로고침"><span>↻</span>{refreshing ? "불러오는 중" : "새로고침"}</button></div><p className="interval-label"><i className="connection-dot"/> 화면 갱신 {lastUpdated} · 휠로 확대 · 좌우 드래그로 이전 거래일 보기</p></div></div>
+    <div className="data-clock"><span><i/>시세 기준</span><b>2026.07.17 20:00 KST</b><em>마지막 거래일 · NXT 애프터마켓 포함</em></div>
+    <div className="candle-toolbar"><label htmlFor="candle-interval">봉 간격</label><div className="interval-select"><select id="candle-interval" value={interval} onChange={event=>{setInterval(Number(event.target.value) as Interval);setDetail(null)}}>{intervals.map(item=><option key={item.value} value={item.value}>{item.label}</option>)}</select><span>⌄</span></div><i>약 30개 봉으로 시작</i><small>왼쪽으로 이동하면 이전 거래일 데이터가 계속 표시돼요.</small></div>
     <div className="ohlc-strip">
       {shown ? <><b>{dateLabel(shown.time, true)}</b><span>시 <strong>{shown.open.toLocaleString()}</strong></span><span>고 <strong className="rise">{shown.high.toLocaleString()}</strong></span><span>저 <strong className="fall">{shown.low.toLocaleString()}</strong></span><span>종 <strong>{shown.close.toLocaleString()}</strong></span><span>거래량 <strong>{shown.volume.toLocaleString()}</strong></span></> : <><b>{range} · {intervals.find(item=>item.value===interval)?.label}봉</b><span>캔들 위에 마우스를 올리면 해당 시각의 상세 정보가 표시됩니다.</span></>}
     </div>
