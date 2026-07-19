@@ -5,20 +5,20 @@ import { useEffect, useRef, useState } from "react";
 
 type Props = { name: string; code: string; price: number; entry: number; stop: number; target: number };
 type RangeKey = "1일" | "3일" | "1주" | "1개월" | "3개월" | "1년";
-type Interval = 1 | 3 | 5 | 10 | 30 | 60 | 1440;
+type Interval = 1 | 3 | 5 | 10 | 30 | 60 | 300 | 720;
 type Bar = { time: UTCTimestamp; open: number; high: number; low: number; close: number; volume: number };
 type Detail = { time: UTCTimestamp; open: number; high: number; low: number; close: number; volume: number } | null;
 
 const ranges: RangeKey[] = ["1일", "3일", "1주", "1개월", "3개월", "1년"];
 const configs: Record<RangeKey, { days: number; defaultInterval: Interval }> = {
   "1일": { days: 1, defaultInterval: 1 },
-  "3일": { days: 3, defaultInterval: 3 },
-  "1주": { days: 7, defaultInterval: 5 },
-  "1개월": { days: 30, defaultInterval: 30 },
-  "3개월": { days: 90, defaultInterval: 1440 },
-  "1년": { days: 365, defaultInterval: 1440 },
+  "3일": { days: 3, defaultInterval: 30 },
+  "1주": { days: 7, defaultInterval: 60 },
+  "1개월": { days: 30, defaultInterval: 720 },
+  "3개월": { days: 90, defaultInterval: 720 },
+  "1년": { days: 365, defaultInterval: 720 },
 };
-const intervals: { value: Interval; label: string }[] = [{value:1,label:"1분"},{value:3,label:"3분"},{value:5,label:"5분"},{value:10,label:"10분"},{value:30,label:"30분"},{value:60,label:"60분"},{value:1440,label:"일"}];
+const intervals: { value: Interval; label: string }[] = [{value:1,label:"1분"},{value:3,label:"3분"},{value:5,label:"5분"},{value:10,label:"10분"},{value:30,label:"30분"},{value:60,label:"1시간"},{value:300,label:"5시간"},{value:720,label:"12시간"}];
 
 function roundPrice(value: number) { return Math.round(value / 100) * 100; }
 
@@ -31,7 +31,7 @@ function sampleBars(base: number, code: string, range: RangeKey, minutes: Interv
   let close = base * (range === "1년" ? .72 : range === "3개월" ? .86 : .96);
   let index = 0;
 
-  if (minutes < 1440) {
+  if (minutes <= 720) {
     for (let dayOffset = days - 1; dayOffset >= 0; dayOffset--) {
       const session = new Date(end);
       session.setUTCDate(end.getUTCDate() - dayOffset);
@@ -49,21 +49,6 @@ function sampleBars(base: number, code: string, range: RangeKey, minutes: Interv
         index++;
       }
     }
-  } else {
-    for (let dayOffset = days - 1; dayOffset >= 0; dayOffset--) {
-      const date = new Date(end);
-      date.setUTCDate(end.getUTCDate() - dayOffset);
-      if (date.getUTCDay() === 0 || date.getUTCDay() === 6) continue;
-      const wave = Math.sin((index + seed) * .57) * .011 + Math.cos((index + seed) * .19) * .007;
-      const drift = (base - close) * .025;
-      const open = close * (1 + Math.sin(index + seed) * .004);
-      close = Math.max(base * .62, close * (1 + wave) + drift);
-      const high = Math.max(open, close) * (1.006 + Math.abs(Math.sin(index)) * .004);
-      const low = Math.min(open, close) * (0.994 - Math.abs(Math.cos(index)) * .003);
-      const time = Date.UTC(date.getUTCFullYear(), date.getUTCMonth(), date.getUTCDate(), 0, 0);
-      result.push({ time: Math.floor(time/1000) as UTCTimestamp, open: roundPrice(open), high: roundPrice(high), low: roundPrice(low), close: roundPrice(close), volume: Math.round(5_000_000 + Math.abs(Math.sin(index*.7))*11_000_000) });
-      index++;
-    }
   }
   if (result.length) result[result.length - 1].close = base;
   return result;
@@ -76,7 +61,7 @@ function dateLabel(time: UTCTimestamp, intraday: boolean) {
 export default function MarketChart({ name, code, price, entry, stop, target }: Props) {
   const container = useRef<HTMLDivElement>(null);
   const [range, setRange] = useState<RangeKey>("3개월");
-  const [interval, setInterval] = useState<Interval>(1440);
+  const [interval, setInterval] = useState<Interval>(720);
   const [detail, setDetail] = useState<Detail>(null);
   const [refreshKey, setRefreshKey] = useState(0);
   const [lastUpdated, setLastUpdated] = useState("—");
@@ -93,7 +78,7 @@ export default function MarketChart({ name, code, price, entry, stop, target }: 
 
   useEffect(() => {
     if (!container.current) return;
-    const intraday = interval < 1440;
+    const intraday = true;
     const chart = createChart(container.current, {
       height: 350,
       layout: { background: { type: ColorType.Solid, color: "#ffffff" }, textColor: "#7b8883", fontFamily: "Inter, Pretendard, sans-serif", fontSize: 11 },
@@ -131,7 +116,8 @@ export default function MarketChart({ name, code, price, entry, stop, target }: 
       setLastUpdated(new Date().toLocaleTimeString("ko-KR", { hour12: false }));
     }, 1000);
     setLastUpdated(new Date().toLocaleTimeString("ko-KR", { hour12: false }));
-    chart.timeScale().fitContent();
+    if (bars.length > 30) chart.timeScale().setVisibleLogicalRange({ from: bars.length - 30.5, to: bars.length - .25 });
+    else chart.timeScale().fitContent();
     const observer = new ResizeObserver(entries => chart.applyOptions({ width: entries[0].contentRect.width }));
     observer.observe(container.current);
     return () => { window.clearInterval(simulation); observer.disconnect(); chart.remove(); };
@@ -140,9 +126,9 @@ export default function MarketChart({ name, code, price, entry, stop, target }: 
   const shown = detail;
   return <article className="market-chart panel">
     <div className="chart-head"><div><span className="sample-pill">INTERACTIVE SAMPLE</span><h2>{name} <small>{code}</small></h2><strong>{price.toLocaleString("ko-KR")}원</strong><em>사용자 제공 기준값 · 실시간 아님</em></div><div><div className="chart-tools"><div className="ranges">{ranges.map(item=><button key={item} className={range===item?"active":""} onClick={()=>{setRange(item);setInterval(configs[item].defaultInterval);setDetail(null)}}>{item}</button>)}</div><button className={`refresh-chart ${refreshing ? "loading" : ""}`} onClick={refreshChart} disabled={refreshing} aria-label="차트 새로고침"><span>↻</span>{refreshing ? "불러오는 중" : "새로고침"}</button></div><p className="interval-label"><i className="connection-dot"/> SIMULATED · Last updated {lastUpdated} · 휠로 확대 · 드래그로 이동</p></div></div>
-    <div className="candle-toolbar"><span>봉 간격</span>{intervals.map(item=><button key={item.value} className={interval===item.value?"active":""} onClick={()=>{setInterval(item.value);setDetail(null)}}>{item.label}</button>)}<small>장 마감 후에도 마지막 거래일 데이터를 표시합니다.</small></div>
+    <div className="candle-toolbar"><label htmlFor="candle-interval">봉 간격</label><div className="interval-select"><select id="candle-interval" value={interval} onChange={event=>{setInterval(Number(event.target.value) as Interval);setDetail(null)}}>{intervals.map(item=><option key={item.value} value={item.value}>{item.label}</option>)}</select><span>⌄</span></div><i>약 30개 봉으로 시작</i><small>확대·축소하면 선택 기간의 나머지 데이터를 볼 수 있어요.</small></div>
     <div className="ohlc-strip">
-      {shown ? <><b>{dateLabel(shown.time, interval < 1440)}</b><span>시 <strong>{shown.open.toLocaleString()}</strong></span><span>고 <strong className="rise">{shown.high.toLocaleString()}</strong></span><span>저 <strong className="fall">{shown.low.toLocaleString()}</strong></span><span>종 <strong>{shown.close.toLocaleString()}</strong></span><span>거래량 <strong>{shown.volume.toLocaleString()}</strong></span></> : <><b>{range} · {intervals.find(item=>item.value===interval)?.label}봉</b><span>캔들 위에 마우스를 올리면 해당 시각의 상세 정보가 표시됩니다.</span></>}
+      {shown ? <><b>{dateLabel(shown.time, true)}</b><span>시 <strong>{shown.open.toLocaleString()}</strong></span><span>고 <strong className="rise">{shown.high.toLocaleString()}</strong></span><span>저 <strong className="fall">{shown.low.toLocaleString()}</strong></span><span>종 <strong>{shown.close.toLocaleString()}</strong></span><span>거래량 <strong>{shown.volume.toLocaleString()}</strong></span></> : <><b>{range} · {intervals.find(item=>item.value===interval)?.label}봉</b><span>캔들 위에 마우스를 올리면 해당 시각의 상세 정보가 표시됩니다.</span></>}
     </div>
     <div ref={container} className="chart-canvas" />
     <div className="chart-legend"><span className="entry">매수 기준 {entry.toLocaleString()}원</span><span className="stop">손절 {stop.toLocaleString()}원</span><span className="target">익절 {target.toLocaleString()}원</span><small>데이터 연결 전 UI·분석 흐름 검토용입니다.</small></div>
