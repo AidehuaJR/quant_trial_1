@@ -5,12 +5,12 @@ import MarketChart from "./MarketChart";
 
 type Stock = {
   code: string; name: string; price: number; change: number; signal: string;
-  confidence: number; spark: number[]; sector: string;
+  confidence: number; spark: number[]; sector: string; aliases?: string[];
 };
 
 const stocks: Stock[] = [
-  { code: "005930", name: "삼성전자", price: 255000, change: 1.22, signal: "매수 관찰", confidence: 72, sector: "반도체", spark: [44,43,46,45,49,51,50,54,52,57,60,62] },
-  { code: "000660", name: "SK하이닉스", price: 214500, change: 2.14, signal: "상승 추세", confidence: 81, sector: "반도체", spark: [38,41,39,44,49,48,53,55,58,56,62,66] },
+  { code: "005930", name: "삼성전자", price: 255000, change: 1.22, signal: "매수 관찰", confidence: 72, sector: "반도체", aliases: ["SSNLF", "SMSN", "SAMSUNG"], spark: [44,43,46,45,49,51,50,54,52,57,60,62] },
+  { code: "000660", name: "SK하이닉스", price: 214500, change: 2.14, signal: "상승 추세", confidence: 81, sector: "반도체", aliases: ["SKHY", "SK HYNIX", "HYNIX"], spark: [38,41,39,44,49,48,53,55,58,56,62,66] },
   { code: "035420", name: "NAVER", price: 189200, change: -0.63, signal: "중립", confidence: 54, sector: "인터넷", spark: [61,59,62,58,56,57,53,55,51,49,52,50] },
   { code: "035720", name: "카카오", price: 42150, change: -1.08, signal: "대기", confidence: 46, sector: "인터넷", spark: [64,62,60,61,58,55,57,54,52,48,50,47] },
   { code: "005380", name: "현대차", price: 246000, change: 0.82, signal: "매수 관찰", confidence: 68, sector: "자동차", spark: [42,45,44,48,47,51,54,52,55,58,57,61] },
@@ -50,6 +50,7 @@ export default function Home() {
   const [target, setTarget] = useState(276700);
   const [simulated, setSimulated] = useState(false);
   const [query, setQuery] = useState("");
+  const [searchOpen, setSearchOpen] = useState(false);
   const [showAll, setShowAll] = useState(false);
   const [portfolioRange, setPortfolioRange] = useState("3개월");
   const [marketTick, setMarketTick] = useState(0);
@@ -66,7 +67,11 @@ export default function Home() {
   const reward = useMemo(() => Math.max(0, target - entry), [entry, target]);
   const quantity = Math.max(1, Math.floor(capital / Math.max(entry, 1)));
   const ratio = risk ? (reward / risk).toFixed(1) : "—";
-  const filteredStocks = stocks.filter(stock => `${stock.name} ${stock.code} ${stock.sector}`.toLowerCase().includes(query.toLowerCase()));
+  const normalizedQuery = query.trim().toLowerCase();
+  const filteredStocks = stocks.filter(stock =>
+    `${stock.name} ${stock.code} ${stock.sector} ${(stock.aliases ?? []).join(" ")}`.toLowerCase().includes(normalizedQuery)
+  );
+  const searchSuggestions = normalizedQuery ? filteredStocks.slice(0, 6) : [];
   const visibleStocks = showAll || query ? filteredStocks : filteredStocks.slice(0, 5);
   const samplePrice = (stock: Stock) => Math.round((stock.price * (1 + Math.sin((marketTick + Number(stock.code.slice(-2))) * .71) * .00035)) / 100) * 100;
 
@@ -76,6 +81,8 @@ export default function Home() {
     setStop(Math.round(stock.price * .935 / 100) * 100);
     setTarget(Math.round(stock.price * 1.085 / 100) * 100);
     setSimulated(false);
+    setQuery("");
+    setSearchOpen(false);
   }
 
   return (
@@ -99,7 +106,7 @@ export default function Home() {
       <section className="workspace">
         <header>
           <div><p className="eyebrow">2026년 7월 19일 · 장 마감</p><h1>좋은 저녁이에요, Edward</h1><p className="sub">Dehua가 시장을 지켜보고 있어요.</p></div>
-          <div className="header-actions"><div className="global-search"><span>⌕</span><input value={query} onChange={e=>setQuery(e.target.value)} placeholder="종목명 또는 코드 검색" /></div><button className="icon-btn">♢<em>2</em></button><button className="primary" onClick={() => setAutopilot(!autopilot)}><span className={autopilot ? "live-dot on" : "live-dot"}/>{autopilot ? "오토파일럿 실행 중" : "오토파일럿 시작"}</button></div>
+          <div className="header-actions"><div className={`global-search ${searchOpen && normalizedQuery ? "open" : ""}`} onBlur={e=>{if(!e.currentTarget.contains(e.relatedTarget)) setSearchOpen(false)}}><span>⌕</span><input value={query} onFocus={()=>setSearchOpen(true)} onChange={e=>{setQuery(e.target.value);setSearchOpen(true)}} onKeyDown={e=>{if(e.key === "Escape") setSearchOpen(false); if(e.key === "Enter" && searchSuggestions[0]) chooseStock(searchSuggestions[0])}} placeholder="종목명 또는 코드 검색" autoComplete="off" />{searchOpen && normalizedQuery && <div className="search-suggestions" role="listbox">{searchSuggestions.map(stock=><button key={stock.code} role="option" aria-selected={selected.code === stock.code} onMouseDown={e=>e.preventDefault()} onClick={()=>chooseStock(stock)}><span className={`stock-logo logo-${stock.code}`}>{stock.name.slice(0,1)}</span><span className="suggestion-name"><strong>{stock.name}</strong><small>{stock.code} · {stock.sector}</small></span><span className="ticker-alias">{stock.aliases?.find(alias=>alias.toLowerCase().includes(normalizedQuery)) ?? stock.code}</span></button>)}{searchSuggestions.length === 0 && <div className="no-suggestion"><strong>검색 결과가 없어요</strong><small>종목명이나 코드를 다시 확인해 주세요.</small></div>}</div>}</div><button className="icon-btn">♢<em>2</em></button><button className="primary" onClick={() => setAutopilot(!autopilot)}><span className={autopilot ? "live-dot on" : "live-dot"}/>{autopilot ? "오토파일럿 실행 중" : "오토파일럿 시작"}</button></div>
         </header>
 
         <section className="hero-grid">
