@@ -60,6 +60,7 @@ export default function Home() {
   const [language, setLanguage] = useState<Language>("ko");
   const [watchlist, setWatchlist] = useState<string[]>([]);
   const [watchlistOnly, setWatchlistOnly] = useState(false);
+  const [watchQuery, setWatchQuery] = useState("");
 
   const t = (key: string) => tr(language, key);
   const money = (value: number) => `${Math.round(value).toLocaleString(localeFor[language])} ${t("원")}`;
@@ -102,8 +103,9 @@ export default function Home() {
     `${stock.name} ${stock.code} ${stock.sector} ${(stock.aliases ?? []).join(" ")}`.toLowerCase().includes(normalizedQuery)
   );
   const searchSuggestions = normalizedQuery ? filteredStocks.slice(0, 6) : [];
-  const displayedStocks = watchlistOnly ? filteredStocks.filter(stock => watchlist.includes(stock.code)) : filteredStocks;
-  const visibleStocks = showAll || query || watchlistOnly ? displayedStocks : displayedStocks.slice(0, 5);
+  const visibleStocks = showAll || query ? filteredStocks : filteredStocks.slice(0, 5);
+  const savedStocks = stocks.filter(stock => watchlist.includes(stock.code));
+  const watchCandidates = stocks.filter(stock => !watchlist.includes(stock.code) && `${stock.name} ${stock.code} ${stock.sector} ${(stock.aliases ?? []).join(" ")}`.toLowerCase().includes(watchQuery.trim().toLowerCase()));
   const samplePrice = (stock: Stock) => Math.round((stock.price * (1 + Math.sin((marketTick + Number(stock.code.slice(-2))) * .71) * .00035)) / 100) * 100;
 
   function chooseStock(stock: Stock) {
@@ -125,9 +127,8 @@ export default function Home() {
   }
 
   function openWatchlist() {
-    setWatchlistOnly(value => !value);
-    setShowAll(true);
-    window.setTimeout(() => document.getElementById("market-watchlist")?.scrollIntoView({ behavior: "smooth", block: "center" }), 0);
+    setWatchlistOnly(true);
+    setWatchQuery("");
   }
 
   function runAiAnalysis() {
@@ -164,6 +165,41 @@ export default function Home() {
           <div className="header-actions"><label className="language-picker" aria-label="Language"><span>◎</span><select value={language} onChange={e=>changeLanguage(e.target.value as Language)}>{languageOptions.map(option=><option key={option.value} value={option.value}>{option.label}</option>)}</select><i>⌄</i></label><div className={`global-search ${searchOpen && normalizedQuery ? "open" : ""}`} onBlur={e=>{if(!e.currentTarget.contains(e.relatedTarget)) setSearchOpen(false)}}><span>⌕</span><input value={query} onFocus={()=>setSearchOpen(true)} onChange={e=>{setQuery(e.target.value);setSearchOpen(true)}} onKeyDown={e=>{if(e.key === "Escape") setSearchOpen(false); if(e.key === "Enter" && searchSuggestions[0]) chooseStock(searchSuggestions[0])}} placeholder={t("종목명 또는 코드 검색")} autoComplete="off" />{searchOpen && normalizedQuery && <div className="search-suggestions" role="listbox">{searchSuggestions.map(stock=><button key={stock.code} role="option" aria-selected={selected.code === stock.code} onMouseDown={e=>e.preventDefault()} onClick={()=>chooseStock(stock)}><span className={`stock-logo logo-${stock.code}`}>{stock.name.slice(0,1)}</span><span className="suggestion-name"><strong>{stock.name}</strong><small>{stock.code} · {t(stock.sector)}</small></span><span className="ticker-alias">{stock.aliases?.find(alias=>alias.toLowerCase().includes(normalizedQuery)) ?? stock.code}</span></button>)}{searchSuggestions.length === 0 && <div className="no-suggestion"><strong>{t("검색 결과가 없어요")}</strong><small>{t("종목명이나 코드를 다시 확인해 주세요.")}</small></div>}</div>}</div><button className="icon-btn">♢<em>2</em></button><button className="primary" onClick={() => setAutopilot(!autopilot)}><span className={autopilot ? "live-dot on" : "live-dot"}/>{autopilot ? t("오토파일럿 실행 중") : t("오토파일럿 시작")}</button></div>
         </header>
 
+        {watchlistOnly ? <section className="watchlist-page">
+          <div className="watchlist-hero">
+            <div><span className="ai-label">PERSONAL WATCHLIST</span><h2>{t("관심종목")}</h2><p>{t("관심 있는 종목을 별도 공간에서 관리하고 빠르게 확인하세요.")}</p></div>
+            <button className="back-overview" onClick={()=>setWatchlistOnly(false)}>← {t("주요 종목으로 돌아가기")}</button>
+          </div>
+          <div className="watchlist-layout">
+            <article className="panel watchlist-saved">
+              <div className="section-title"><div><h2>{t("저장된 관심종목")}</h2><p>{savedStocks.length}{t("개")} · {t("브라우저에 안전하게 저장됩니다.")}</p></div></div>
+              <div className="saved-stock-list">
+                {savedStocks.map(stock=><div className="saved-stock" key={stock.code}>
+                  <button className="saved-stock-main" onClick={()=>{chooseStock(stock);setWatchlistOnly(false)}}>
+                    <span className={`stock-logo logo-${stock.code}`}>{stock.name.slice(0,1)}</span>
+                    <span className="saved-name"><strong>{stock.name}</strong><small>{stock.code} · {t(stock.sector)}</small></span>
+                    <Sparkline values={stock.spark} positive={stock.change >= 0}/>
+                    <span className="saved-price"><strong>{samplePrice(stock).toLocaleString(localeFor[language])}</strong><small className={stock.change >= 0 ? "up" : "down"}>{stock.change >= 0 ? "+" : ""}{stock.change}%</small></span>
+                    <span className={`signal ${stock.signal === "상승 추세" ? "strong" : stock.signal === "중립" ? "neutral" : stock.signal === "대기" ? "wait" : ""}`}><i/>{t(stock.signal)}</span>
+                  </button>
+                  <button className="remove-watch" onClick={()=>toggleWatchlist(stock.code)}>{t("삭제")}</button>
+                </div>)}
+                {savedStocks.length === 0 && <div className="watchlist-empty"><span>＋</span><strong>{t("관심종목이 비어 있어요")}</strong><p>{t("오른쪽 검색창에서 관심 있는 종목을 추가해 보세요.")}</p></div>}
+              </div>
+            </article>
+            <aside className="panel add-watch-panel">
+              <span className="ai-label">ADD STOCK</span><h2>{t("관심종목 추가")}</h2><p>{t("종목명이나 코드를 검색한 뒤 추가하세요.")}</p>
+              <label className="watch-search"><span>⌕</span><input value={watchQuery} onChange={e=>setWatchQuery(e.target.value)} placeholder={t("종목명 또는 코드 검색")}/></label>
+              <div className="watch-candidates">
+                {(watchQuery ? watchCandidates : stocks.filter(stock=>!watchlist.includes(stock.code)).slice(0,6)).map(stock=><div key={stock.code}>
+                  <span className={`stock-logo logo-${stock.code}`}>{stock.name.slice(0,1)}</span><span><strong>{stock.name}</strong><small>{stock.code} · {t(stock.sector)}</small></span><button onClick={()=>toggleWatchlist(stock.code)}>＋ {t("추가")}</button>
+                </div>)}
+                {watchCandidates.length === 0 && watchQuery && <div className="candidate-empty">{t("추가할 수 있는 종목이 없어요.")}</div>}
+              </div>
+            </aside>
+          </div>
+        </section> : <>
+
         <section className="hero-grid">
           <article className="balance-card">
             <div className="card-top"><span>{t("모의 투자 자산")} <i className="sim-tag">SIM</i></span><button>···</button></div>
@@ -185,20 +221,17 @@ export default function Home() {
         <MarketChart name={selected.name} code={selected.code} price={selected.price} entry={entry} stop={stop} target={target} language={language} />
 
         <section className="content-grid">
-          <div className="market-panel panel" id="market-watchlist">
-            <div className="section-title"><div><h2>{watchlistOnly ? t("관심종목") : t("주요 종목")} <i className="sim-tag pulse">SIMULATED 1s</i></h2><p>{query ? `“${query}” ${t("검색 결과")} ${displayedStocks.length}${t("개")}` : watchlistOnly ? `${t("저장된 관심종목")} · ${watchlist.length}${t("개")}` : `${t("데이터 연결 전 시세 동작 미리보기")} · ${lastSampleUpdate}`}</p></div><button onClick={()=>setShowAll(!showAll)}>{showAll ? t("간단히 보기 ↑") : t("전체보기 →")}</button></div>
+          <div className="market-panel panel">
+            <div className="section-title"><div><h2>{t("주요 종목")} <i className="sim-tag pulse">SIMULATED 1s</i></h2><p>{query ? `“${query}” ${t("검색 결과")} ${filteredStocks.length}${t("개")}` : `${t("데이터 연결 전 시세 동작 미리보기")} · ${lastSampleUpdate}`}</p></div><button onClick={()=>setShowAll(!showAll)}>{showAll ? t("간단히 보기 ↑") : t("전체보기 →")}</button></div>
             <div className="stock-list">
-              {visibleStocks.map(stock => <div key={stock.code} className={`stock-row ${selected.code === stock.code ? "selected" : ""}`}>
-                <button className="stock-select" onClick={() => chooseStock(stock)}>
-                  <div className={`stock-logo logo-${stock.code}`}>{stock.name.slice(0,1)}</div>
-                  <div className="stock-name"><strong>{stock.name}</strong><small>{stock.code} · {t(stock.sector)}</small></div>
-                  <Sparkline values={stock.spark} positive={stock.change >= 0} />
-                  <div className="stock-price"><strong>{samplePrice(stock).toLocaleString()}</strong><small className={stock.change >= 0 ? "up" : "down"}>{stock.change >= 0 ? "+" : ""}{stock.change}%</small></div>
-                  <div className={`signal ${stock.signal === "상승 추세" ? "strong" : stock.signal === "중립" ? "neutral" : stock.signal === "대기" ? "wait" : ""}`}><i />{t(stock.signal)}</div>
-                </button>
-                <button className={`watch-toggle ${watchlist.includes(stock.code) ? "saved" : ""}`} onClick={()=>toggleWatchlist(stock.code)} aria-label={watchlist.includes(stock.code) ? t("관심종목에서 삭제") : t("관심종목에 추가")} title={watchlist.includes(stock.code) ? t("관심종목에서 삭제") : t("관심종목에 추가")}>{watchlist.includes(stock.code) ? "★" : "☆"}</button>
-              </div>)}
-              {visibleStocks.length === 0 && <div className="empty-search"><span>{watchlistOnly ? "☆" : "⌕"}</span><strong>{watchlistOnly ? t("관심종목이 비어 있어요") : t("검색 결과가 없어요")}</strong><small>{watchlistOnly ? t("별표 버튼으로 종목을 추가해 보세요.") : t("종목명이나 코드를 다시 확인해 주세요.")}</small></div>}
+              {visibleStocks.map(stock => <button key={stock.code} className={`stock-row ${selected.code === stock.code ? "selected" : ""}`} onClick={() => chooseStock(stock)}>
+                <div className={`stock-logo logo-${stock.code}`}>{stock.name.slice(0,1)}</div>
+                <div className="stock-name"><strong>{stock.name}</strong><small>{stock.code} · {t(stock.sector)}</small></div>
+                <Sparkline values={stock.spark} positive={stock.change >= 0} />
+                <div className="stock-price"><strong>{samplePrice(stock).toLocaleString(localeFor[language])}</strong><small className={stock.change >= 0 ? "up" : "down"}>{stock.change >= 0 ? "+" : ""}{stock.change}%</small></div>
+                <div className={`signal ${stock.signal === "상승 추세" ? "strong" : stock.signal === "중립" ? "neutral" : stock.signal === "대기" ? "wait" : ""}`}><i />{t(stock.signal)}</div>
+              </button>)}
+              {visibleStocks.length === 0 && <div className="empty-search"><span>⌕</span><strong>{t("검색 결과가 없어요")}</strong><small>{t("종목명이나 코드를 다시 확인해 주세요.")}</small></div>}
             </div>
           </div>
 
@@ -235,6 +268,7 @@ export default function Home() {
           <div className="activity-row"><span className="event buy">{t("매수")}</span><div><strong>SK하이닉스 {t("모의 매수")}</strong><small>{t("AI 전략")} · 2{t("주")} · {money(212500)}</small></div><p>{t("지지 구간 진입 및 거래량 반등 확인")}</p><time>{t("오늘")} 14:32</time></div>
           <div className="activity-row"><span className="event protect">{t("보호")}</span><div><strong>삼성전자 {t("손절가 조정")}</strong><small>{money(72100)} → {money(72800)}</small></div><p>{t("수익 보호 규칙에 따라 자동 조정")}</p><time>{t("오늘")} 11:08</time></div>
         </section>
+        </>}
       </section>
     </main>
   );
