@@ -2,8 +2,9 @@
 
 import { CandlestickSeries, ColorType, createChart, HistogramSeries, type UTCTimestamp } from "lightweight-charts";
 import { useEffect, useRef, useState } from "react";
+import { localeFor, rangeLabel, type Language } from "./i18n";
 
-type Props = { name: string; code: string; price: number; entry: number; stop: number; target: number };
+type Props = { name: string; code: string; price: number; entry: number; stop: number; target: number; language: Language };
 type RangeKey = "1일" | "3일" | "1주" | "1개월" | "3개월" | "1년";
 type Interval = 1 | 3 | 5 | 10 | 30 | 60 | 300 | 720;
 type Bar = { time: UTCTimestamp; open: number; high: number; low: number; close: number; volume: number };
@@ -19,6 +20,15 @@ const configs: Record<RangeKey, { days: number; defaultInterval: Interval }> = {
   "1년": { days: 365, defaultInterval: 720 },
 };
 const intervals: { value: Interval; label: string }[] = [{value:1,label:"1분"},{value:3,label:"3분"},{value:5,label:"5분"},{value:10,label:"10분"},{value:30,label:"30분"},{value:60,label:"1시간"},{value:300,label:"5시간"},{value:720,label:"12시간"}];
+
+const chartCopy: Record<Language, Record<string,string>> = {
+  ko: {},
+  en: {"사용자 제공 기준값 · 실시간 아님":"User-provided reference · Not live","새로고침":"Refresh","불러오는 중":"Loading","화면 갱신":"Screen refreshed","휠로 확대 · 좌우 드래그로 이전 거래일 보기":"Scroll to zoom · drag to view prior sessions","시세 기준":"Market data","마지막 거래일 · NXT 애프터마켓 포함":"Last trading day · includes NXT after-market","봉 간격":"Candle interval","약 30개 봉으로 시작":"Starts with about 30 candles","왼쪽으로 이동하면 이전 거래일 데이터가 계속 표시돼요.":"Drag left to reveal prior trading sessions.","분":"min","시간":"hr","시":"O","고":"H","저":"L","종":"C","거래량":"Volume","봉":"candle","캔들 위에 마우스를 올리면 해당 시각의 상세 정보가 표시됩니다.":"Hover a candle to view its details.","매수":"Buy","손절":"Stop","익절":"Target","매수 기준":"Buy price","데이터 연결 전 UI·분석 흐름 검토용입니다.":"UI and analysis-flow preview before live data connection."},
+  zh: {"사용자 제공 기준값 · 실시간 아님":"用户参考值 · 非实时","새로고침":"刷新","불러오는 중":"加载中","화면 갱신":"画面刷新","휠로 확대 · 좌우 드래그로 이전 거래일 보기":"滚轮缩放 · 左右拖动查看以往交易日","시세 기준":"行情时间","마지막 거래일 · NXT 애프터마켓 포함":"最近交易日 · 包含 NXT 盘后","봉 간격":"K线周期","약 30개 봉으로 시작":"默认约30根K线","왼쪽으로 이동하면 이전 거래일 데이터가 계속 표시돼요.":"向左拖动可继续查看以往交易日。","분":"分钟","시간":"小时","시":"开","고":"高","저":"低","종":"收","거래량":"成交量","봉":"K线","캔들 위에 마우스를 올리면 해당 시각의 상세 정보가 표시됩니다.":"将鼠标移到K线上可查看详细信息。","매수":"买入","손절":"止损","익절":"止盈","매수 기준":"买入价","데이터 연결 전 UI·분석 흐름 검토용입니다.":"用于连接实时数据前检查界面与分析流程。"},
+  es: {"사용자 제공 기준값 · 실시간 아님":"Valor de referencia · No en vivo","새로고침":"Actualizar","불러오는 중":"Cargando","화면 갱신":"Pantalla actualizada","휠로 확대 · 좌우 드래그로 이전 거래일 보기":"Rueda para ampliar · arrastra para sesiones anteriores","시세 기준":"Datos de mercado","마지막 거래일 · NXT 애프터마켓 포함":"Última sesión · incluye NXT posmercado","봉 간격":"Intervalo de vela","약 30개 봉으로 시작":"Comienza con unas 30 velas","왼쪽으로 이동하면 이전 거래일 데이터가 계속 표시돼요.":"Arrastra a la izquierda para ver sesiones anteriores.","분":"min","시간":"h","시":"A","고":"M","저":"m","종":"C","거래량":"Volumen","봉":"vela","캔들 위에 마우스를 올리면 해당 시각의 상세 정보가 표시됩니다.":"Pasa el cursor sobre una vela para ver detalles.","매수":"Compra","손절":"Stop","익절":"Objetivo","매수 기준":"Precio de compra","데이터 연결 전 UI·분석 흐름 검토용입니다.":"Vista previa de interfaz y análisis antes de conectar datos reales."}
+};
+function chartText(language: Language, key: string) { return chartCopy[language][key] ?? key; }
+function intervalLabel(language: Language, minutes: Interval) { return minutes < 60 ? `${minutes}${chartText(language,"분")}` : `${minutes/60}${chartText(language,"시간")}`; }
 
 function roundPrice(value: number) { return Math.round(value / 100) * 100; }
 
@@ -62,11 +72,12 @@ function sampleBars(base: number, code: string, range: RangeKey, minutes: Interv
   return result;
 }
 
-function dateLabel(time: UTCTimestamp, intraday: boolean) {
-  return new Intl.DateTimeFormat("ko-KR", { timeZone: "Asia/Seoul", year: "numeric", month: "2-digit", day: "2-digit", ...(intraday ? { hour: "2-digit", minute: "2-digit", hour12: false } : {}) }).format(new Date(time * 1000));
+function dateLabel(time: UTCTimestamp, intraday: boolean, language: Language) {
+  return new Intl.DateTimeFormat(localeFor[language], { timeZone: "Asia/Seoul", year: "numeric", month: "2-digit", day: "2-digit", ...(intraday ? { hour: "2-digit", minute: "2-digit", hour12: false } : {}) }).format(new Date(time * 1000));
 }
 
-export default function MarketChart({ name, code, price, entry, stop, target }: Props) {
+export default function MarketChart({ name, code, price, entry, stop, target, language }: Props) {
+  const t = (key: string) => chartText(language,key);
   const container = useRef<HTMLDivElement>(null);
   const [range, setRange] = useState<RangeKey>("3개월");
   const [interval, setInterval] = useState<Interval>(720);
@@ -79,7 +90,7 @@ export default function MarketChart({ name, code, price, entry, stop, target }: 
     setDetail(null);
     window.setTimeout(() => {
       setRefreshKey(value => value + 1);
-      setLastUpdated(new Date().toLocaleTimeString("ko-KR", { hour12: false }));
+      setLastUpdated(new Date().toLocaleTimeString(localeFor[language], { hour12: false }));
       setRefreshing(false);
     }, 350);
   }
@@ -90,7 +101,7 @@ export default function MarketChart({ name, code, price, entry, stop, target }: 
     const chart = createChart(container.current, {
       height: 350,
       layout: { background: { type: ColorType.Solid, color: "#ffffff" }, textColor: "#7b8883", fontFamily: "Inter, Pretendard, sans-serif", fontSize: 11 },
-      localization: { locale: "ko-KR", priceFormatter: value => `${Math.round(value).toLocaleString("ko-KR")}` },
+      localization: { locale: localeFor[language], priceFormatter: value => `${Math.round(value).toLocaleString(localeFor[language])}` },
       grid: { vertLines: { color: "#f1f4f2" }, horzLines: { color: "#edf1ef" } },
       rightPriceScale: { borderColor: "#e5ebe8", scaleMargins: { top: .08, bottom: .24 } },
       timeScale: { borderColor: "#e5ebe8", timeVisible: intraday, secondsVisible: false, rightOffset: 3, barSpacing: intraday ? (range === "1일" ? 6 : 4) : range === "1년" ? 4 : 8 },
@@ -104,9 +115,9 @@ export default function MarketChart({ name, code, price, entry, stop, target }: 
     const volume = chart.addSeries(HistogramSeries, { priceFormat: { type: "volume" }, priceScaleId: "volume" });
     volume.priceScale().applyOptions({ scaleMargins: { top: .82, bottom: 0 } });
     volume.setData(bars.map(bar => ({ time: bar.time, value: bar.volume, color: bar.close >= bar.open ? "#ef9ba14a" : "#77a9df4d" })));
-    candle.createPriceLine({ price: entry, color: "#159b6e", lineWidth: 1, lineStyle: 2, axisLabelVisible: true, title: "매수" });
-    candle.createPriceLine({ price: stop, color: "#e05f67", lineWidth: 1, lineStyle: 2, axisLabelVisible: true, title: "손절" });
-    candle.createPriceLine({ price: target, color: "#d39a2e", lineWidth: 1, lineStyle: 2, axisLabelVisible: true, title: "익절" });
+    candle.createPriceLine({ price: entry, color: "#159b6e", lineWidth: 1, lineStyle: 2, axisLabelVisible: true, title: chartText(language,"매수") });
+    candle.createPriceLine({ price: stop, color: "#e05f67", lineWidth: 1, lineStyle: 2, axisLabelVisible: true, title: chartText(language,"손절") });
+    candle.createPriceLine({ price: target, color: "#d39a2e", lineWidth: 1, lineStyle: 2, axisLabelVisible: true, title: chartText(language,"익절") });
     chart.subscribeCrosshairMove(param => {
       if (!param.time) { setDetail(null); return; }
       const candlePoint = param.seriesData.get(candle) as { open?: number; high?: number; low?: number; close?: number } | undefined;
@@ -121,25 +132,25 @@ export default function MarketChart({ name, code, price, entry, stop, target }: 
       liveClose = roundPrice(liveClose * (1 + Math.sin(Date.now()/1300 + Number(code.slice(-2))) * .00022));
       const previous = bars.at(-1)!;
       candle.update({ time: lastTime, open: previous.open, high: Math.max(previous.high, liveClose), low: Math.min(previous.low, liveClose), close: liveClose });
-      setLastUpdated(new Date().toLocaleTimeString("ko-KR", { hour12: false }));
+      setLastUpdated(new Date().toLocaleTimeString(localeFor[language], { hour12: false }));
     }, 1000);
-    setLastUpdated(new Date().toLocaleTimeString("ko-KR", { hour12: false }));
+    setLastUpdated(new Date().toLocaleTimeString(localeFor[language], { hour12: false }));
     if (bars.length > 30) chart.timeScale().setVisibleLogicalRange({ from: bars.length - 30.5, to: bars.length - .25 });
     else chart.timeScale().fitContent();
     const observer = new ResizeObserver(entries => chart.applyOptions({ width: entries[0].contentRect.width }));
     observer.observe(container.current);
     return () => { window.clearInterval(simulation); observer.disconnect(); chart.remove(); };
-  }, [code, price, entry, stop, target, range, interval, refreshKey]);
+  }, [code, price, entry, stop, target, range, interval, refreshKey, language]);
 
   const shown = detail;
   return <article className="market-chart panel">
-    <div className="chart-head"><div><span className="sample-pill">INTERACTIVE SAMPLE</span><h2>{name} <small>{code}</small></h2><strong>{price.toLocaleString("ko-KR")}원</strong><em>사용자 제공 기준값 · 실시간 아님</em></div><div><div className="chart-tools"><div className="ranges">{ranges.map(item=><button key={item} className={range===item?"active":""} onClick={()=>{setRange(item);setInterval(configs[item].defaultInterval);setDetail(null)}}>{item}</button>)}</div><button className={`refresh-chart ${refreshing ? "loading" : ""}`} onClick={refreshChart} disabled={refreshing} aria-label="차트 새로고침"><span>↻</span>{refreshing ? "불러오는 중" : "새로고침"}</button></div><p className="interval-label"><i className="connection-dot"/> 화면 갱신 {lastUpdated} · 휠로 확대 · 좌우 드래그로 이전 거래일 보기</p></div></div>
-    <div className="data-clock"><span><i/>시세 기준</span><b>2026.07.17 20:00 KST</b><em>마지막 거래일 · NXT 애프터마켓 포함</em></div>
-    <div className="candle-toolbar"><label htmlFor="candle-interval">봉 간격</label><div className="interval-select"><select id="candle-interval" value={interval} onChange={event=>{setInterval(Number(event.target.value) as Interval);setDetail(null)}}>{intervals.map(item=><option key={item.value} value={item.value}>{item.label}</option>)}</select><span>⌄</span></div><i>약 30개 봉으로 시작</i><small>왼쪽으로 이동하면 이전 거래일 데이터가 계속 표시돼요.</small></div>
+    <div className="chart-head"><div><span className="sample-pill">INTERACTIVE SAMPLE</span><h2>{name} <small>{code}</small></h2><strong>{price.toLocaleString(localeFor[language])} {language === "ko" ? "원" : "KRW"}</strong><em>{t("사용자 제공 기준값 · 실시간 아님")}</em></div><div><div className="chart-tools"><div className="ranges">{ranges.map(item=><button key={item} className={range===item?"active":""} onClick={()=>{setRange(item);setInterval(configs[item].defaultInterval);setDetail(null)}}>{rangeLabel(language,item)}</button>)}</div><button className={`refresh-chart ${refreshing ? "loading" : ""}`} onClick={refreshChart} disabled={refreshing} aria-label={t("새로고침")}><span>↻</span>{refreshing ? t("불러오는 중") : t("새로고침")}</button></div><p className="interval-label"><i className="connection-dot"/> {t("화면 갱신")} {lastUpdated} · {t("휠로 확대 · 좌우 드래그로 이전 거래일 보기")}</p></div></div>
+    <div className="data-clock"><span><i/>{t("시세 기준")}</span><b>2026.07.17 20:00 KST</b><em>{t("마지막 거래일 · NXT 애프터마켓 포함")}</em></div>
+    <div className="candle-toolbar"><label htmlFor="candle-interval">{t("봉 간격")}</label><div className="interval-select"><select id="candle-interval" value={interval} onChange={event=>{setInterval(Number(event.target.value) as Interval);setDetail(null)}}>{intervals.map(item=><option key={item.value} value={item.value}>{intervalLabel(language,item.value)}</option>)}</select><span>⌄</span></div><i>{t("약 30개 봉으로 시작")}</i><small>{t("왼쪽으로 이동하면 이전 거래일 데이터가 계속 표시돼요.")}</small></div>
     <div className="ohlc-strip">
-      {shown ? <><b>{dateLabel(shown.time, true)}</b><span>시 <strong>{shown.open.toLocaleString()}</strong></span><span>고 <strong className="rise">{shown.high.toLocaleString()}</strong></span><span>저 <strong className="fall">{shown.low.toLocaleString()}</strong></span><span>종 <strong>{shown.close.toLocaleString()}</strong></span><span>거래량 <strong>{shown.volume.toLocaleString()}</strong></span></> : <><b>{range} · {intervals.find(item=>item.value===interval)?.label}봉</b><span>캔들 위에 마우스를 올리면 해당 시각의 상세 정보가 표시됩니다.</span></>}
+      {shown ? <><b>{dateLabel(shown.time, true, language)}</b><span>{t("시")} <strong>{shown.open.toLocaleString(localeFor[language])}</strong></span><span>{t("고")} <strong className="rise">{shown.high.toLocaleString(localeFor[language])}</strong></span><span>{t("저")} <strong className="fall">{shown.low.toLocaleString(localeFor[language])}</strong></span><span>{t("종")} <strong>{shown.close.toLocaleString(localeFor[language])}</strong></span><span>{t("거래량")} <strong>{shown.volume.toLocaleString(localeFor[language])}</strong></span></> : <><b>{rangeLabel(language,range)} · {intervalLabel(language,interval)} {t("봉")}</b><span>{t("캔들 위에 마우스를 올리면 해당 시각의 상세 정보가 표시됩니다.")}</span></>}
     </div>
     <div ref={container} className="chart-canvas" />
-    <div className="chart-legend"><span className="entry">매수 기준 {entry.toLocaleString()}원</span><span className="stop">손절 {stop.toLocaleString()}원</span><span className="target">익절 {target.toLocaleString()}원</span><small>데이터 연결 전 UI·분석 흐름 검토용입니다.</small></div>
+    <div className="chart-legend"><span className="entry">{t("매수 기준")} {entry.toLocaleString(localeFor[language])} KRW</span><span className="stop">{t("손절")} {stop.toLocaleString(localeFor[language])} KRW</span><span className="target">{t("익절")} {target.toLocaleString(localeFor[language])} KRW</span><small>{t("데이터 연결 전 UI·분석 흐름 검토용입니다.")}</small></div>
   </article>;
 }
