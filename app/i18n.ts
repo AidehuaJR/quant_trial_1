@@ -38,9 +38,9 @@ const feedCopy: Record<Language, Record<string,string>> = {
 export function tr(language: Language, key: string) { return feedCopy[language][key] ?? watchlistCopy[language][key] ?? dictionaries[language][key] ?? key; }
 export const localeFor: Record<Language, string> = { ko: "ko-KR", en: "en-US", zh: "zh-CN", es: "es-ES" };
 const rangeNames: Record<Language, Record<string, string>> = {
-  ko: { "1일":"1일","3일":"3일","1주":"1주","1개월":"1개월","3개월":"3개월","1년":"1년" },
-  en: { "1일":"1D","3일":"3D","1주":"1W","1개월":"1M","3개월":"3M","1년":"1Y" },
-  zh: { "1일":"1天","3일":"3天","1주":"1周","1개월":"1月","3개월":"3月","1년":"1年" },
-  es: { "1일":"1D","3일":"3D","1주":"1S","1개월":"1M","3개월":"3M","1년":"1A" },
+  ko: { "1일":"1일","3일":"3일","1주":"1주","1개월":"1개월","3개월":"3개월","1년":"1년","전체":"전체" },
+  en: { "1일":"1D","3일":"3D","1주":"1W","1개월":"1M","3개월":"3M","1년":"1Y","전체":"ALL" },
+  zh: { "1일":"1天","3일":"3天","1주":"1周","1개월":"1月","3개월":"3月","1년":"1年","전체":"全部" },
+  es: { "1일":"1D","3일":"3D","1주":"1S","1개월":"1M","3개월":"3M","1년":"1A","전체":"TODO" },
 };
 export function rangeLabel(language: Language, key: string) { return rangeNames[language][key] ?? key; }
