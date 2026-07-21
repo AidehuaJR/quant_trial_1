@@ -61,6 +61,7 @@ export default function Home() {
   const [watchlist, setWatchlist] = useState<string[]>([]);
   const [watchlistOnly, setWatchlistOnly] = useState(false);
   const [watchQuery, setWatchQuery] = useState("");
+  const [watchRefreshing, setWatchRefreshing] = useState(false);
 
   const t = (key: string) => tr(language, key);
   const money = (value: number) => `${Math.round(value).toLocaleString(localeFor[language])} ${t("원")}`;
@@ -131,6 +132,15 @@ export default function Home() {
     setWatchQuery("");
   }
 
+  function refreshWatchlist() {
+    setWatchRefreshing(true);
+    window.setTimeout(() => {
+      setMarketTick(value => value + 1);
+      setLastSampleUpdate(new Date().toLocaleTimeString(localeFor[language], { hour12: false }));
+      setWatchRefreshing(false);
+    }, 350);
+  }
+
   function runAiAnalysis() {
     const adjustment = (analysisCount % 3) * .002;
     setEntry(Math.round(selected.price * (.982 + adjustment) / 100) * 100);
@@ -168,7 +178,7 @@ export default function Home() {
         {watchlistOnly ? <section className="watchlist-page">
           <div className="watchlist-hero">
             <div><span className="ai-label">PERSONAL WATCHLIST</span><h2>{t("관심종목")}</h2><p>{t("관심 있는 종목을 별도 공간에서 관리하고 빠르게 확인하세요.")}</p></div>
-            <button className="back-overview" onClick={()=>setWatchlistOnly(false)}>← {t("주요 종목으로 돌아가기")}</button>
+            <div className="watchlist-hero-actions"><div className="feed-status"><i/>{t("데모 시세")} · {t("마지막 갱신")} {lastSampleUpdate}</div><button className={`feed-refresh ${watchRefreshing?"loading":""}`} onClick={refreshWatchlist}><span>↻</span>{t("새로고침")}</button><button className="back-overview" onClick={()=>setWatchlistOnly(false)}>← {t("주요 종목으로 돌아가기")}</button></div>
           </div>
           <div className="watchlist-layout">
             <article className="panel watchlist-saved">
@@ -219,7 +229,7 @@ export default function Home() {
         </section>
 
         <section className="overview-watchlist panel">
-          <div className="overview-watch-head"><div><span className="ai-label">WATCHLIST</span><h2>{t("관심종목 미리보기")}</h2></div><button onClick={openWatchlist}>{t("관리하기")} →</button></div>
+          <div className="overview-watch-head"><div><span className="ai-label">WATCHLIST</span><h2>{t("관심종목 미리보기")}</h2></div><div className="overview-watch-tools"><span className="feed-status light"><i/>{t("데모 시세")} · {t("마지막 갱신")} {lastSampleUpdate}</span><button className={`feed-refresh light ${watchRefreshing?"loading":""}`} onClick={refreshWatchlist}><span>↻</span>{t("새로고침")}</button><button onClick={openWatchlist}>{t("관리하기")} →</button></div></div>
           {savedStocks.length ? <div className="overview-watch-items">{savedStocks.map(stock=><button key={stock.code} onClick={()=>chooseStock(stock)} className={selected.code===stock.code?"active":""}>
             <span className={`stock-logo logo-${stock.code}`}>{stock.name.slice(0,1)}</span>
             <span className="overview-watch-name"><strong>{stock.name}</strong><small>{stock.code}</small></span>
