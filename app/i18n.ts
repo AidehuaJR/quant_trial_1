@@ -29,7 +29,13 @@ const watchlistCopy: Record<Language, Record<string,string>> = {
   zh: { "저장된 관심종목":"已保存的自选股", "관심종목에 추가":"添加到自选股", "관심종목에서 삭제":"从自选股删除", "관심종목이 비어 있어요":"自选股为空", "관심 있는 종목을 별도 공간에서 관리하고 빠르게 확인하세요.":"在独立页面管理并快速查看关注的股票。", "주요 종목으로 돌아가기":"返回热门股票", "브라우저에 안전하게 저장됩니다.":"保存在此浏览器中", "오른쪽 검색창에서 관심 있는 종목을 추가해 보세요.":"使用搜索面板添加股票。", "관심종목 추가":"添加自选股", "종목명이나 코드를 검색한 뒤 추가하세요.":"搜索公司名称或代码后添加。", "삭제":"删除", "추가":"添加", "추가할 수 있는 종목이 없어요.":"没有可添加的匹配股票。", "관심종목 미리보기":"自选股预览", "관리하기":"管理", "추가된 관심종목이 없습니다.":"尚未添加自选股。", "관심종목 페이지에서 종목을 추가해 보세요.":"请前往自选股页面添加股票。" },
   es: { "저장된 관심종목":"Favoritos guardados", "관심종목에 추가":"Añadir a favoritos", "관심종목에서 삭제":"Quitar de favoritos", "관심종목이 비어 있어요":"Tu lista está vacía", "관심 있는 종목을 별도 공간에서 관리하고 빠르게 확인하세요.":"Gestiona y revisa tus acciones favoritas en un espacio separado.", "주요 종목으로 돌아가기":"Volver a acciones principales", "브라우저에 안전하게 저장됩니다.":"Guardado en este navegador", "오른쪽 검색창에서 관심 있는 종목을 추가해 보세요.":"Añade una acción usando el buscador.", "관심종목 추가":"Añadir acción", "종목명이나 코드를 검색한 뒤 추가하세요.":"Busca por empresa o símbolo y añádela.", "삭제":"Eliminar", "추가":"Añadir", "추가할 수 있는 종목이 없어요.":"No hay acciones coincidentes para añadir.", "관심종목 미리보기":"Vista de favoritos", "관리하기":"Gestionar", "추가된 관심종목이 없습니다.":"Aún no hay acciones favoritas.", "관심종목 페이지에서 종목을 추가해 보세요.":"Añade acciones desde la página de Favoritos." },
 };
-export function tr(language: Language, key: string) { return watchlistCopy[language][key] ?? dictionaries[language][key] ?? key; }
+const feedCopy: Record<Language, Record<string,string>> = {
+  ko: {},
+  en: { "데모 시세":"Demo feed", "마지막 갱신":"Last updated", "새로고침":"Refresh" },
+  zh: { "데모 시세":"演示行情", "마지막 갱신":"最后更新", "새로고침":"刷新" },
+  es: { "데모 시세":"Datos de demostración", "마지막 갱신":"Última actualización", "새로고침":"Actualizar" },
+};
+export function tr(language: Language, key: string) { return feedCopy[language][key] ?? watchlistCopy[language][key] ?? dictionaries[language][key] ?? key; }
 export const localeFor: Record<Language, string> = { ko: "ko-KR", en: "en-US", zh: "zh-CN", es: "es-ES" };
 const rangeNames: Record<Language, Record<string, string>> = {
   ko: { "1일":"1일","3일":"3일","1주":"1주","1개월":"1개월","3개월":"3개월","1년":"1년" },
