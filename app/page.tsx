@@ -62,6 +62,7 @@ export default function Home() {
   const [watchlistOnly, setWatchlistOnly] = useState(false);
   const [watchQuery, setWatchQuery] = useState("");
   const [watchRefreshing, setWatchRefreshing] = useState(false);
+  const [mobileMenuOpen, setMobileMenuOpen] = useState(false);
 
   const t = (key: string) => tr(language, key);
   const money = (value: number) => `${Math.round(value).toLocaleString(localeFor[language])} ${t("원")}`;
@@ -130,6 +131,12 @@ export default function Home() {
   function openWatchlist() {
     setWatchlistOnly(true);
     setWatchQuery("");
+    setMobileMenuOpen(false);
+  }
+
+  function openOverview() {
+    setWatchlistOnly(false);
+    setMobileMenuOpen(false);
   }
 
   function refreshWatchlist() {
@@ -153,18 +160,21 @@ export default function Home() {
 
   return (
     <main className="shell">
-      <aside className="sidebar">
+      <button className="mobile-menu-toggle" type="button" aria-label="Open navigation menu" aria-expanded={mobileMenuOpen} aria-controls="primary-sidebar" onClick={()=>setMobileMenuOpen(true)}><span /><span /><span /></button>
+      <button className={`mobile-menu-backdrop ${mobileMenuOpen ? "open" : ""}`} type="button" aria-label="Close navigation menu" onClick={()=>setMobileMenuOpen(false)} />
+      <aside id="primary-sidebar" className={`sidebar ${mobileMenuOpen ? "mobile-open" : ""}`}>
+        <button className="mobile-menu-close" type="button" aria-label="Close navigation menu" onClick={()=>setMobileMenuOpen(false)}>×</button>
         <div className="brand"><span className="brandmark">D</span><span>DEHUA <b>AI</b></span></div>
         <nav>
-          <button className={`nav ${watchlistOnly ? "" : "active"}`} onClick={()=>setWatchlistOnly(false)}><span>◫</span> {t("오버뷰")}</button>
-          <button className="nav"><span>⌁</span> {t("오토파일럿")}</button>
-          <button className="nav"><span>◎</span> {t("전략")}</button>
-          <button className="nav"><span>↗</span> {t("거래 내역")}</button>
+          <button className={`nav ${watchlistOnly ? "" : "active"}`} onClick={openOverview}><span>◫</span> {t("오버뷰")}</button>
+          <button className="nav" onClick={()=>setMobileMenuOpen(false)}><span>⌁</span> {t("오토파일럿")}</button>
+          <button className="nav" onClick={()=>setMobileMenuOpen(false)}><span>◎</span> {t("전략")}</button>
+          <button className="nav" onClick={()=>setMobileMenuOpen(false)}><span>↗</span> {t("거래 내역")}</button>
           <button className={`nav ${watchlistOnly ? "active" : ""}`} onClick={openWatchlist}><span>☆</span> {t("관심종목")}<b className="nav-count">{watchlist.length}</b></button>
         </nav>
         <div className="sidebar-bottom">
           <div className="paper-badge"><i /> PAPER TRADING</div>
-          <button className="nav"><span>⚙</span> {t("설정")}</button>
+          <button className="nav" onClick={()=>setMobileMenuOpen(false)}><span>⚙</span> {t("설정")}</button>
           <div className="profile"><div className="avatar">EK</div><div><strong>Edward Kim</strong><small>{t("기본 플랜")}</small></div><span>⌄</span></div>
         </div>
       </aside>
