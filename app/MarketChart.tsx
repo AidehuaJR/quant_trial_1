@@ -101,7 +101,7 @@ export default function MarketChart({ name, code, price, entry, stop, target, la
     const chart = createChart(container.current, {
       height: 350,
       layout: { background: { type: ColorType.Solid, color: "#ffffff" }, textColor: "#7b8883", fontFamily: "Inter, Pretendard, sans-serif", fontSize: 11 },
-      localization: { locale: localeFor[language], priceFormatter: value => `${Math.round(value).toLocaleString(localeFor[language])}` },
+      localization: { locale: localeFor[language], priceFormatter: (value: number) => `${Math.round(value).toLocaleString(localeFor[language])}` },
       grid: { vertLines: { color: "#f1f4f2" }, horzLines: { color: "#edf1ef" } },
       rightPriceScale: { borderColor: "#e5ebe8", scaleMargins: { top: .08, bottom: .24 } },
       timeScale: { borderColor: "#e5ebe8", timeVisible: intraday, secondsVisible: false, rightOffset: 3, barSpacing: intraday ? (range === "1일" ? 6 : 4) : range === "1년" ? 4 : 8 },
