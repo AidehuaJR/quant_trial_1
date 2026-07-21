@@ -2,6 +2,10 @@
 
 A Korean-market autonomous trading dashboard prototype focused on transparent paper trading, interactive chart analysis, and future Toss Securities integration.
 
+## Website
+
+[Open the GitHub Pages website](https://aidehuajr.github.io/quant_trial_1/)
+
 ## Current prototype
 
 - Searchable Korean representative stocks
