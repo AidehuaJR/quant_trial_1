@@ -23,7 +23,13 @@ const es: Record<string, string> = {
 };
 
 const dictionaries: Record<Language, Record<string, string>> = { ko: {}, en, zh, es };
-export function tr(language: Language, key: string) { return dictionaries[language][key] ?? key; }
+const watchlistCopy: Record<Language, Record<string,string>> = {
+  ko: {},
+  en: { "저장된 관심종목":"Saved watchlist", "관심종목에 추가":"Add to watchlist", "관심종목에서 삭제":"Remove from watchlist", "관심종목이 비어 있어요":"Your watchlist is empty", "별표 버튼으로 종목을 추가해 보세요.":"Use the star button to save a stock." },
+  zh: { "저장된 관심종목":"已保存的自选股", "관심종목에 추가":"添加到自选股", "관심종목에서 삭제":"从自选股删除", "관심종목이 비어 있어요":"自选股为空", "별표 버튼으로 종목을 추가해 보세요.":"点击星标按钮添加股票。" },
+  es: { "저장된 관심종목":"Favoritos guardados", "관심종목에 추가":"Añadir a favoritos", "관심종목에서 삭제":"Quitar de favoritos", "관심종목이 비어 있어요":"Tu lista está vacía", "별표 버튼으로 종목을 추가해 보세요.":"Usa la estrella para guardar una acción." },
+};
+export function tr(language: Language, key: string) { return watchlistCopy[language][key] ?? dictionaries[language][key] ?? key; }
 export const localeFor: Record<Language, string> = { ko: "ko-KR", en: "en-US", zh: "zh-CN", es: "es-ES" };
 const rangeNames: Record<Language, Record<string, string>> = {
   ko: { "1일":"1일","3일":"3일","1주":"1주","1개월":"1개월","3개월":"3개월","1년":"1년" },
