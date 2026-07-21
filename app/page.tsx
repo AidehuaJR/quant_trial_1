@@ -58,6 +58,8 @@ export default function Home() {
   const [analysisCount, setAnalysisCount] = useState(0);
   const [analysisTime, setAnalysisTime] = useState("방금 전");
   const [language, setLanguage] = useState<Language>("ko");
+  const [watchlist, setWatchlist] = useState<string[]>([]);
+  const [watchlistOnly, setWatchlistOnly] = useState(false);
 
   const t = (key: string) => tr(language, key);
   const money = (value: number) => `${Math.round(value).toLocaleString(localeFor[language])} ${t("원")}`;
@@ -66,6 +68,15 @@ export default function Home() {
     const saved = window.localStorage.getItem("dehua-language") as Language | null;
     if (!saved || !languageOptions.some(option => option.value === saved)) return;
     const timer = window.setTimeout(() => setLanguage(saved), 0);
+    return () => window.clearTimeout(timer);
+  }, []);
+
+  useEffect(() => {
+    const saved = window.localStorage.getItem("dehua-watchlist");
+    if (!saved) return;
+    const timer = window.setTimeout(() => {
+      try { setWatchlist(JSON.parse(saved)); } catch { setWatchlist([]); }
+    }, 0);
     return () => window.clearTimeout(timer);
   }, []);
 
@@ -91,7 +102,8 @@ export default function Home() {
     `${stock.name} ${stock.code} ${stock.sector} ${(stock.aliases ?? []).join(" ")}`.toLowerCase().includes(normalizedQuery)
   );
   const searchSuggestions = normalizedQuery ? filteredStocks.slice(0, 6) : [];
-  const visibleStocks = showAll || query ? filteredStocks : filteredStocks.slice(0, 5);
+  const displayedStocks = watchlistOnly ? filteredStocks.filter(stock => watchlist.includes(stock.code)) : filteredStocks;
+  const visibleStocks = showAll || query || watchlistOnly ? displayedStocks : displayedStocks.slice(0, 5);
   const samplePrice = (stock: Stock) => Math.round((stock.price * (1 + Math.sin((marketTick + Number(stock.code.slice(-2))) * .71) * .00035)) / 100) * 100;
 
   function chooseStock(stock: Stock) {
@@ -102,6 +114,20 @@ export default function Home() {
     setSimulated(false);
     setQuery("");
     setSearchOpen(false);
+  }
+
+  function toggleWatchlist(code: string) {
+    setWatchlist(current => {
+      const next = current.includes(code) ? current.filter(item => item !== code) : [...current, code];
+      window.localStorage.setItem("dehua-watchlist", JSON.stringify(next));
+      return next;
+    });
+  }
+
+  function openWatchlist() {
+    setWatchlistOnly(value => !value);
+    setShowAll(true);
+    window.setTimeout(() => document.getElementById("market-watchlist")?.scrollIntoView({ behavior: "smooth", block: "center" }), 0);
   }
 
   function runAiAnalysis() {
@@ -119,11 +145,11 @@ export default function Home() {
       <aside className="sidebar">
         <div className="brand"><span className="brandmark">D</span><span>DEHUA <b>AI</b></span></div>
         <nav>
-          <button className="nav active"><span>◫</span> {t("오버뷰")}</button>
+          <button className={`nav ${watchlistOnly ? "" : "active"}`} onClick={()=>setWatchlistOnly(false)}><span>◫</span> {t("오버뷰")}</button>
           <button className="nav"><span>⌁</span> {t("오토파일럿")}</button>
           <button className="nav"><span>◎</span> {t("전략")}</button>
           <button className="nav"><span>↗</span> {t("거래 내역")}</button>
-          <button className="nav"><span>☆</span> {t("관심종목")}</button>
+          <button className={`nav ${watchlistOnly ? "active" : ""}`} onClick={openWatchlist}><span>☆</span> {t("관심종목")}<b className="nav-count">{watchlist.length}</b></button>
         </nav>
         <div className="sidebar-bottom">
           <div className="paper-badge"><i /> PAPER TRADING</div>
@@ -159,17 +185,20 @@ export default function Home() {
         <MarketChart name={selected.name} code={selected.code} price={selected.price} entry={entry} stop={stop} target={target} language={language} />
 
         <section className="content-grid">
-          <div className="market-panel panel">
-            <div className="section-title"><div><h2>{t("주요 종목")} <i className="sim-tag pulse">SIMULATED 1s</i></h2><p>{query ? `“${query}” ${t("검색 결과")} ${filteredStocks.length}${t("개")}` : `${t("데이터 연결 전 시세 동작 미리보기")} · ${lastSampleUpdate}`}</p></div><button onClick={()=>setShowAll(!showAll)}>{showAll ? t("간단히 보기 ↑") : t("전체보기 →")}</button></div>
+          <div className="market-panel panel" id="market-watchlist">
+            <div className="section-title"><div><h2>{watchlistOnly ? t("관심종목") : t("주요 종목")} <i className="sim-tag pulse">SIMULATED 1s</i></h2><p>{query ? `“${query}” ${t("검색 결과")} ${displayedStocks.length}${t("개")}` : watchlistOnly ? `${t("저장된 관심종목")} · ${watchlist.length}${t("개")}` : `${t("데이터 연결 전 시세 동작 미리보기")} · ${lastSampleUpdate}`}</p></div><button onClick={()=>setShowAll(!showAll)}>{showAll ? t("간단히 보기 ↑") : t("전체보기 →")}</button></div>
             <div className="stock-list">
-              {visibleStocks.map(stock => <button key={stock.code} className={`stock-row ${selected.code === stock.code ? "selected" : ""}`} onClick={() => chooseStock(stock)}>
-                <div className={`stock-logo logo-${stock.code}`}>{stock.name.slice(0,1)}</div>
-                <div className="stock-name"><strong>{stock.name}</strong><small>{stock.code} · {t(stock.sector)}</small></div>
-                <Sparkline values={stock.spark} positive={stock.change >= 0} />
-                <div className="stock-price"><strong>{samplePrice(stock).toLocaleString()}</strong><small className={stock.change >= 0 ? "up" : "down"}>{stock.change >= 0 ? "+" : ""}{stock.change}%</small></div>
-                <div className={`signal ${stock.signal === "상승 추세" ? "strong" : stock.signal === "중립" ? "neutral" : stock.signal === "대기" ? "wait" : ""}`}><i />{t(stock.signal)}</div>
-              </button>)}
-              {visibleStocks.length === 0 && <div className="empty-search"><span>⌕</span><strong>{t("검색 결과가 없어요")}</strong><small>{t("종목명이나 코드를 다시 확인해 주세요.")}</small></div>}
+              {visibleStocks.map(stock => <div key={stock.code} className={`stock-row ${selected.code === stock.code ? "selected" : ""}`}>
+                <button className="stock-select" onClick={() => chooseStock(stock)}>
+                  <div className={`stock-logo logo-${stock.code}`}>{stock.name.slice(0,1)}</div>
+                  <div className="stock-name"><strong>{stock.name}</strong><small>{stock.code} · {t(stock.sector)}</small></div>
+                  <Sparkline values={stock.spark} positive={stock.change >= 0} />
+                  <div className="stock-price"><strong>{samplePrice(stock).toLocaleString()}</strong><small className={stock.change >= 0 ? "up" : "down"}>{stock.change >= 0 ? "+" : ""}{stock.change}%</small></div>
+                  <div className={`signal ${stock.signal === "상승 추세" ? "strong" : stock.signal === "중립" ? "neutral" : stock.signal === "대기" ? "wait" : ""}`}><i />{t(stock.signal)}</div>
+                </button>
+                <button className={`watch-toggle ${watchlist.includes(stock.code) ? "saved" : ""}`} onClick={()=>toggleWatchlist(stock.code)} aria-label={watchlist.includes(stock.code) ? t("관심종목에서 삭제") : t("관심종목에 추가")} title={watchlist.includes(stock.code) ? t("관심종목에서 삭제") : t("관심종목에 추가")}>{watchlist.includes(stock.code) ? "★" : "☆"}</button>
+              </div>)}
+              {visibleStocks.length === 0 && <div className="empty-search"><span>{watchlistOnly ? "☆" : "⌕"}</span><strong>{watchlistOnly ? t("관심종목이 비어 있어요") : t("검색 결과가 없어요")}</strong><small>{watchlistOnly ? t("별표 버튼으로 종목을 추가해 보세요.") : t("종목명이나 코드를 다시 확인해 주세요.")}</small></div>}
             </div>
           </div>
 
