@@ -218,6 +218,16 @@ export default function Home() {
           </article>
         </section>
 
+        <section className="overview-watchlist panel">
+          <div className="overview-watch-head"><div><span className="ai-label">WATCHLIST</span><h2>{t("관심종목 미리보기")}</h2></div><button onClick={openWatchlist}>{t("관리하기")} →</button></div>
+          {savedStocks.length ? <div className="overview-watch-items">{savedStocks.map(stock=><button key={stock.code} onClick={()=>chooseStock(stock)} className={selected.code===stock.code?"active":""}>
+            <span className={`stock-logo logo-${stock.code}`}>{stock.name.slice(0,1)}</span>
+            <span className="overview-watch-name"><strong>{stock.name}</strong><small>{stock.code}</small></span>
+            <Sparkline values={stock.spark} positive={stock.change>=0}/>
+            <span className="overview-watch-price"><strong>{samplePrice(stock).toLocaleString(localeFor[language])}</strong><small className={stock.change>=0?"up":"down"}>{stock.change>=0?"+":""}{stock.change}%</small></span>
+          </button>)}</div> : <button className="overview-watch-empty" onClick={openWatchlist}><span>＋</span><div><strong>{t("추가된 관심종목이 없습니다.")}</strong><small>{t("관심종목 페이지에서 종목을 추가해 보세요.")}</small></div><i>→</i></button>}
+        </section>
+
         <MarketChart name={selected.name} code={selected.code} price={selected.price} entry={entry} stop={stop} target={target} language={language} />
 
         <section className="content-grid">
