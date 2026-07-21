@@ -2,6 +2,7 @@
 
 import { useEffect, useMemo, useState } from "react";
 import MarketChart from "./MarketChart";
+import { languageOptions, localeFor, rangeLabel, tr, type Language } from "./i18n";
 
 type Stock = {
   code: string; name: string; price: number; change: number; signal: string;
@@ -25,7 +26,6 @@ const stocks: Stock[] = [
   { code: "012450", name: "한화에어로스페이스", price: 816000, change: 1.72, signal: "매수 관찰", confidence: 71, sector: "방산", spark: [40,43,45,48,46,52,54,56,59,58,63,65] },
 ];
 
-function won(value: number) { return `${Math.round(value).toLocaleString("ko-KR")}원`; }
 const portfolioSeries: Record<string, number[]> = {
   "1일": [42,44,43,47,45,49,52,50,54,53,57,59,58,62],
   "3일": [48,45,47,43,46,50,49,54,52,55,59,57,61,63],
@@ -57,13 +57,30 @@ export default function Home() {
   const [lastSampleUpdate, setLastSampleUpdate] = useState("—");
   const [analysisCount, setAnalysisCount] = useState(0);
   const [analysisTime, setAnalysisTime] = useState("방금 전");
+  const [language, setLanguage] = useState<Language>("ko");
+
+  const t = (key: string) => tr(language, key);
+  const money = (value: number) => `${Math.round(value).toLocaleString(localeFor[language])} ${t("원")}`;
 
   useEffect(() => {
-    const update = () => { setMarketTick(value => value + 1); setLastSampleUpdate(new Date().toLocaleTimeString("ko-KR", { hour12: false })); };
+    const saved = window.localStorage.getItem("dehua-language") as Language | null;
+    if (!saved || !languageOptions.some(option => option.value === saved)) return;
+    const timer = window.setTimeout(() => setLanguage(saved), 0);
+    return () => window.clearTimeout(timer);
+  }, []);
+
+  function changeLanguage(next: Language) {
+    setLanguage(next);
+    window.localStorage.setItem("dehua-language", next);
+    document.documentElement.lang = next === "zh" ? "zh-CN" : next;
+  }
+
+  useEffect(() => {
+    const update = () => { setMarketTick(value => value + 1); setLastSampleUpdate(new Date().toLocaleTimeString(localeFor[language], { hour12: false })); };
     update();
     const timer = window.setInterval(update, 1000);
     return () => window.clearInterval(timer);
-  }, []);
+  }, [language]);
 
   const risk = useMemo(() => Math.max(0, entry - stop), [entry, stop]);
   const reward = useMemo(() => Math.max(0, target - entry), [entry, target]);
@@ -93,7 +110,7 @@ export default function Home() {
     setStop(Math.round(selected.price * (.935 + adjustment / 2) / 100) * 100);
     setTarget(Math.round(selected.price * (1.085 + adjustment) / 100) * 100);
     setAnalysisCount(value => value + 1);
-    setAnalysisTime(new Date().toLocaleTimeString("ko-KR", { hour: "2-digit", minute: "2-digit", hour12: false }));
+    setAnalysisTime(new Date().toLocaleTimeString(localeFor[language], { hour: "2-digit", minute: "2-digit", hour12: false }));
     setSimulated(false);
   }
 
@@ -102,92 +119,92 @@ export default function Home() {
       <aside className="sidebar">
         <div className="brand"><span className="brandmark">D</span><span>DEHUA <b>AI</b></span></div>
         <nav>
-          <button className="nav active"><span>◫</span> 오버뷰</button>
-          <button className="nav"><span>⌁</span> 오토파일럿</button>
-          <button className="nav"><span>◎</span> 전략</button>
-          <button className="nav"><span>↗</span> 거래 내역</button>
-          <button className="nav"><span>☆</span> 관심종목</button>
+          <button className="nav active"><span>◫</span> {t("오버뷰")}</button>
+          <button className="nav"><span>⌁</span> {t("오토파일럿")}</button>
+          <button className="nav"><span>◎</span> {t("전략")}</button>
+          <button className="nav"><span>↗</span> {t("거래 내역")}</button>
+          <button className="nav"><span>☆</span> {t("관심종목")}</button>
         </nav>
         <div className="sidebar-bottom">
           <div className="paper-badge"><i /> PAPER TRADING</div>
-          <button className="nav"><span>⚙</span> 설정</button>
-          <div className="profile"><div className="avatar">EK</div><div><strong>Edward Kim</strong><small>기본 플랜</small></div><span>⌄</span></div>
+          <button className="nav"><span>⚙</span> {t("설정")}</button>
+          <div className="profile"><div className="avatar">EK</div><div><strong>Edward Kim</strong><small>{t("기본 플랜")}</small></div><span>⌄</span></div>
         </div>
       </aside>
 
       <section className="workspace">
         <header>
-          <div><p className="eyebrow">2026년 7월 19일 · 장 마감</p><h1>좋은 저녁이에요, Edward</h1><p className="sub">Dehua가 시장을 지켜보고 있어요.</p></div>
-          <div className="header-actions"><div className={`global-search ${searchOpen && normalizedQuery ? "open" : ""}`} onBlur={e=>{if(!e.currentTarget.contains(e.relatedTarget)) setSearchOpen(false)}}><span>⌕</span><input value={query} onFocus={()=>setSearchOpen(true)} onChange={e=>{setQuery(e.target.value);setSearchOpen(true)}} onKeyDown={e=>{if(e.key === "Escape") setSearchOpen(false); if(e.key === "Enter" && searchSuggestions[0]) chooseStock(searchSuggestions[0])}} placeholder="종목명 또는 코드 검색" autoComplete="off" />{searchOpen && normalizedQuery && <div className="search-suggestions" role="listbox">{searchSuggestions.map(stock=><button key={stock.code} role="option" aria-selected={selected.code === stock.code} onMouseDown={e=>e.preventDefault()} onClick={()=>chooseStock(stock)}><span className={`stock-logo logo-${stock.code}`}>{stock.name.slice(0,1)}</span><span className="suggestion-name"><strong>{stock.name}</strong><small>{stock.code} · {stock.sector}</small></span><span className="ticker-alias">{stock.aliases?.find(alias=>alias.toLowerCase().includes(normalizedQuery)) ?? stock.code}</span></button>)}{searchSuggestions.length === 0 && <div className="no-suggestion"><strong>검색 결과가 없어요</strong><small>종목명이나 코드를 다시 확인해 주세요.</small></div>}</div>}</div><button className="icon-btn">♢<em>2</em></button><button className="primary" onClick={() => setAutopilot(!autopilot)}><span className={autopilot ? "live-dot on" : "live-dot"}/>{autopilot ? "오토파일럿 실행 중" : "오토파일럿 시작"}</button></div>
+          <div><p className="eyebrow">{t("2026년 7월 19일 · 장 마감")}</p><h1>{t("좋은 저녁이에요, Edward")}</h1><p className="sub">{t("Dehua가 시장을 지켜보고 있어요.")}</p></div>
+          <div className="header-actions"><label className="language-picker" aria-label="Language"><span>◎</span><select value={language} onChange={e=>changeLanguage(e.target.value as Language)}>{languageOptions.map(option=><option key={option.value} value={option.value}>{option.label}</option>)}</select><i>⌄</i></label><div className={`global-search ${searchOpen && normalizedQuery ? "open" : ""}`} onBlur={e=>{if(!e.currentTarget.contains(e.relatedTarget)) setSearchOpen(false)}}><span>⌕</span><input value={query} onFocus={()=>setSearchOpen(true)} onChange={e=>{setQuery(e.target.value);setSearchOpen(true)}} onKeyDown={e=>{if(e.key === "Escape") setSearchOpen(false); if(e.key === "Enter" && searchSuggestions[0]) chooseStock(searchSuggestions[0])}} placeholder={t("종목명 또는 코드 검색")} autoComplete="off" />{searchOpen && normalizedQuery && <div className="search-suggestions" role="listbox">{searchSuggestions.map(stock=><button key={stock.code} role="option" aria-selected={selected.code === stock.code} onMouseDown={e=>e.preventDefault()} onClick={()=>chooseStock(stock)}><span className={`stock-logo logo-${stock.code}`}>{stock.name.slice(0,1)}</span><span className="suggestion-name"><strong>{stock.name}</strong><small>{stock.code} · {t(stock.sector)}</small></span><span className="ticker-alias">{stock.aliases?.find(alias=>alias.toLowerCase().includes(normalizedQuery)) ?? stock.code}</span></button>)}{searchSuggestions.length === 0 && <div className="no-suggestion"><strong>{t("검색 결과가 없어요")}</strong><small>{t("종목명이나 코드를 다시 확인해 주세요.")}</small></div>}</div>}</div><button className="icon-btn">♢<em>2</em></button><button className="primary" onClick={() => setAutopilot(!autopilot)}><span className={autopilot ? "live-dot on" : "live-dot"}/>{autopilot ? t("오토파일럿 실행 중") : t("오토파일럿 시작")}</button></div>
         </header>
 
         <section className="hero-grid">
           <article className="balance-card">
-            <div className="card-top"><span>모의 투자 자산 <i className="sim-tag">SIM</i></span><button>···</button></div>
-            <strong className="balance">10,248,500원</strong>
-            <div className="positive">+248,500원 <small>(+2.49%)</small></div>
-            <div className="portfolio-ranges">{Object.keys(portfolioSeries).map(item=><button key={item} className={portfolioRange===item?"active":""} onClick={()=>setPortfolioRange(item)}>{item}</button>)}</div>
+            <div className="card-top"><span>{t("모의 투자 자산")} <i className="sim-tag">SIM</i></span><button>···</button></div>
+            <strong className="balance">{money(10248500)}</strong>
+            <div className="positive">+{money(248500)} <small>(+2.49%)</small></div>
+            <div className="portfolio-ranges">{Object.keys(portfolioSeries).map(item=><button key={item} className={portfolioRange===item?"active":""} onClick={()=>setPortfolioRange(item)}>{rangeLabel(language,item)}</button>)}</div>
             <div className="chart-wrap"><Sparkline values={portfolioSeries[portfolioRange]} /><div className="chart-glow" /></div>
-            <div className="card-foot"><span>투자 가능 <b>7,536,000원</b></span><span>투자 중 <b>2,712,500원</b></span></div>
+            <div className="card-foot"><span>{t("투자 가능")} <b>{money(7536000)}</b></span><span>{t("투자 중")} <b>{money(2712500)}</b></span></div>
           </article>
 
           <article className={`pilot-card ${autopilot ? "running" : ""}`}>
-            <div className="pilot-heading"><div className="orb"><span /></div><div><p>DEHUA AUTOPILOT</p><h2>{autopilot ? "자동 운용 중" : "준비 완료"}</h2></div><label className="switch"><input type="checkbox" checked={autopilot} onChange={() => setAutopilot(!autopilot)} /><span /></label></div>
-            <p className="pilot-copy">{autopilot ? "승인된 5개 종목의 조건을 실시간으로 확인하고 있어요." : "설정한 한도 안에서 Dehua가 시장을 관찰하고 모의 거래해요."}</p>
-            <div className="pilot-stats"><div><small>오늘 거래</small><strong>{autopilot ? "3" : "0"}건</strong></div><div><small>일일 손실 한도</small><strong>2.0%</strong></div><div><small>리스크 사용</small><strong>{autopilot ? "18" : "0"}%</strong></div></div>
-            <button className="pilot-settings">운용 설정 보기 <span>→</span></button>
+            <div className="pilot-heading"><div className="orb"><span /></div><div><p>DEHUA AUTOPILOT</p><h2>{autopilot ? t("자동 운용 중") : t("준비 완료")}</h2></div><label className="switch"><input type="checkbox" checked={autopilot} onChange={() => setAutopilot(!autopilot)} /><span /></label></div>
+            <p className="pilot-copy">{autopilot ? t("승인된 5개 종목의 조건을 실시간으로 확인하고 있어요.") : t("설정한 한도 안에서 Dehua가 시장을 관찰하고 모의 거래해요.")}</p>
+            <div className="pilot-stats"><div><small>{t("오늘 거래")}</small><strong>{autopilot ? "3" : "0"}{t("건")}</strong></div><div><small>{t("일일 손실 한도")}</small><strong>2.0%</strong></div><div><small>{t("리스크 사용")}</small><strong>{autopilot ? "18" : "0"}%</strong></div></div>
+            <button className="pilot-settings">{t("운용 설정 보기")} <span>→</span></button>
           </article>
         </section>
 
-        <MarketChart name={selected.name} code={selected.code} price={selected.price} entry={entry} stop={stop} target={target} />
+        <MarketChart name={selected.name} code={selected.code} price={selected.price} entry={entry} stop={stop} target={target} language={language} />
 
         <section className="content-grid">
           <div className="market-panel panel">
-            <div className="section-title"><div><h2>주요 종목 <i className="sim-tag pulse">SIMULATED 1s</i></h2><p>{query ? `“${query}” 검색 결과 ${filteredStocks.length}개` : `데이터 연결 전 시세 동작 미리보기 · ${lastSampleUpdate}`}</p></div><button onClick={()=>setShowAll(!showAll)}>{showAll ? "간단히 보기 ↑" : "전체보기 →"}</button></div>
+            <div className="section-title"><div><h2>{t("주요 종목")} <i className="sim-tag pulse">SIMULATED 1s</i></h2><p>{query ? `“${query}” ${t("검색 결과")} ${filteredStocks.length}${t("개")}` : `${t("데이터 연결 전 시세 동작 미리보기")} · ${lastSampleUpdate}`}</p></div><button onClick={()=>setShowAll(!showAll)}>{showAll ? t("간단히 보기 ↑") : t("전체보기 →")}</button></div>
             <div className="stock-list">
               {visibleStocks.map(stock => <button key={stock.code} className={`stock-row ${selected.code === stock.code ? "selected" : ""}`} onClick={() => chooseStock(stock)}>
                 <div className={`stock-logo logo-${stock.code}`}>{stock.name.slice(0,1)}</div>
-                <div className="stock-name"><strong>{stock.name}</strong><small>{stock.code} · {stock.sector}</small></div>
+                <div className="stock-name"><strong>{stock.name}</strong><small>{stock.code} · {t(stock.sector)}</small></div>
                 <Sparkline values={stock.spark} positive={stock.change >= 0} />
                 <div className="stock-price"><strong>{samplePrice(stock).toLocaleString()}</strong><small className={stock.change >= 0 ? "up" : "down"}>{stock.change >= 0 ? "+" : ""}{stock.change}%</small></div>
-                <div className={`signal ${stock.signal === "상승 추세" ? "strong" : stock.signal === "중립" ? "neutral" : stock.signal === "대기" ? "wait" : ""}`}><i />{stock.signal}</div>
+                <div className={`signal ${stock.signal === "상승 추세" ? "strong" : stock.signal === "중립" ? "neutral" : stock.signal === "대기" ? "wait" : ""}`}><i />{t(stock.signal)}</div>
               </button>)}
-              {visibleStocks.length === 0 && <div className="empty-search"><span>⌕</span><strong>검색 결과가 없어요</strong><small>다른 종목명이나 종목 코드를 입력해 보세요.</small></div>}
+              {visibleStocks.length === 0 && <div className="empty-search"><span>⌕</span><strong>{t("검색 결과가 없어요")}</strong><small>{t("종목명이나 코드를 다시 확인해 주세요.")}</small></div>}
             </div>
           </div>
 
           <div className="order-panel panel">
-            <div className="section-title"><div><span className="ai-label">AI PLAN</span><h2>{selected.name} 자동 주문</h2></div><div className="confidence"><span>{selected.confidence}%</span> 신뢰도</div></div>
-            <div className="tabs"><button className={mode === "ai" ? "active" : ""} onClick={() => setMode("ai")}>AI 추천</button><button className={mode === "rule" ? "active" : ""} onClick={() => setMode("rule")}>직접 설정</button></div>
+            <div className="section-title"><div><span className="ai-label">AI PLAN</span><h2>{selected.name} {t("자동 주문")}</h2></div><div className="confidence"><span>{selected.confidence}%</span> {t("신뢰도")}</div></div>
+            <div className="tabs"><button className={mode === "ai" ? "active" : ""} onClick={() => setMode("ai")}>{t("AI 추천")}</button><button className={mode === "rule" ? "active" : ""} onClick={() => setMode("rule")}>{t("직접 설정")}</button></div>
             {mode === "ai" ? <div className="ai-recommendation">
-              <div className="ai-note"><span>✦</span><p><b>단기 스윙 전략</b> · 지지 구간과 거래량 회복 신호를 조합해 Dehua가 계산한 추천안이에요.</p></div>
-              <div className="ai-plan-head"><span><i /> 분석 완료 · {analysisTime}</span><button onClick={runAiAnalysis}>↻ 다시 분석</button></div>
+              <div className="ai-note"><span>✦</span><p><b>{t("단기 스윙 전략")}</b> · {t("지지 구간과 거래량 회복 신호를 조합해 Dehua가 계산한 추천안이에요.")}</p></div>
+              <div className="ai-plan-head"><span><i /> {t("분석 완료")} · {analysisTime}</span><button onClick={runAiAnalysis}>↻ {t("다시 분석")}</button></div>
               <div className="ai-price-grid">
-                <label><small>추천 매수가 <i>수정 가능</i></small><span><input aria-label="AI 추천 매수가" type="number" value={entry} onChange={e=>{setEntry(Number(e.target.value));setSimulated(false)}}/><b>원</b></span><em>AI 기준값을 원하는 가격으로 조정</em></label>
-                <label className="loss"><small>자동 손절 <i>수정 가능</i></small><span><input aria-label="AI 추천 손절가" type="number" value={stop} onChange={e=>{setStop(Number(e.target.value));setSimulated(false)}}/><b>원</b></span><em>최대 허용 손실 가격</em></label>
-                <label className="gain"><small>1차 목표가 <i>수정 가능</i></small><span><input aria-label="AI 추천 목표가" type="number" value={target} onChange={e=>{setTarget(Number(e.target.value));setSimulated(false)}}/><b>원</b></span><em>자동 익절 목표 가격</em></label>
+                <label><small>{t("추천 매수가")} <i>{t("수정 가능")}</i></small><span><input aria-label={t("추천 매수가")} type="number" value={entry} onChange={e=>{setEntry(Number(e.target.value));setSimulated(false)}}/><b>{t("원")}</b></span><em>{t("AI 기준값을 원하는 가격으로 조정")}</em></label>
+                <label className="loss"><small>{t("자동 손절")} <i>{t("수정 가능")}</i></small><span><input aria-label={t("자동 손절")} type="number" value={stop} onChange={e=>{setStop(Number(e.target.value));setSimulated(false)}}/><b>{t("원")}</b></span><em>{t("최대 허용 손실 가격")}</em></label>
+                <label className="gain"><small>{t("1차 목표가")} <i>{t("수정 가능")}</i></small><span><input aria-label={t("1차 목표가")} type="number" value={target} onChange={e=>{setTarget(Number(e.target.value));setSimulated(false)}}/><b>{t("원")}</b></span><em>{t("자동 익절 목표 가격")}</em></label>
               </div>
-              <div className="ai-reasons"><span>거래량 회복 <b>강함</b></span><span>단기 추세 <b>상승</b></span><span>변동성 <b>보통</b></span></div>
-              <label className="ai-allocation"><span>추천 투자금액 <i>직접 조정 가능</i></span><div><input aria-label="AI 추천 투자금액" type="number" value={capital} onChange={e=>{setCapital(Number(e.target.value));setSimulated(false)}}/><b>원 · {quantity}주</b></div></label>
+              <div className="ai-reasons"><span>{t("거래량 회복")} <b>{t("강함")}</b></span><span>{t("단기 추세")} <b>{t("상승")}</b></span><span>{t("변동성")} <b>{t("보통")}</b></span></div>
+              <label className="ai-allocation"><span>{t("추천 투자금액")} <i>{t("직접 조정 가능")}</i></span><div><input aria-label={t("추천 투자금액")} type="number" value={capital} onChange={e=>{setCapital(Number(e.target.value));setSimulated(false)}}/><b>{t("원")} · {quantity}{t("주")}</b></div></label>
             </div> : <>
-              <div className="ai-note manual"><span>⌁</span><p>원하는 가격과 투자 금액을 직접 입력하면 해당 조건으로 모의 주문을 실행해요.</p></div>
+              <div className="ai-note manual"><span>⌁</span><p>{t("원하는 가격과 투자 금액을 직접 입력하면 해당 조건으로 모의 주문을 실행해요.")}</p></div>
               <div className="input-grid">
-                <label>투자 금액<div><input value={capital} onChange={e=>setCapital(Number(e.target.value))}/><span>원</span></div></label>
-                <label>매수 기준가<div><input value={entry} onChange={e=>setEntry(Number(e.target.value))}/><span>원</span></div></label>
-                <label>손절가<div className="loss"><input value={stop} onChange={e=>setStop(Number(e.target.value))}/><span>원</span></div></label>
-                <label>익절가<div className="gain"><input value={target} onChange={e=>setTarget(Number(e.target.value))}/><span>원</span></div></label>
+                <label>{t("투자 금액")}<div><input value={capital} onChange={e=>setCapital(Number(e.target.value))}/><span>{t("원")}</span></div></label>
+                <label>{t("매수 기준가")}<div><input value={entry} onChange={e=>setEntry(Number(e.target.value))}/><span>{t("원")}</span></div></label>
+                <label>{t("손절가")}<div className="loss"><input value={stop} onChange={e=>setStop(Number(e.target.value))}/><span>{t("원")}</span></div></label>
+                <label>{t("익절가")}<div className="gain"><input value={target} onChange={e=>setTarget(Number(e.target.value))}/><span>{t("원")}</span></div></label>
               </div>
             </>}
-            <div className="summary"><div><small>예상 수량</small><strong>{quantity}주</strong></div><div><small>최대 예상 손실</small><strong className="red">-{won(risk*quantity)}</strong></div><div><small>손익비</small><strong>1 : {ratio}</strong></div></div>
-            <button className="simulate" onClick={() => setSimulated(true)}>{simulated ? "✓ 전략 시뮬레이션 완료" : "이 전략 시뮬레이션하기"}</button>
-            <p className="disclaimer">실제 주문이 아닌 모의 거래입니다. AI 분석은 수익을 보장하지 않습니다.</p>
+            <div className="summary"><div><small>{t("예상 수량")}</small><strong>{quantity}{t("주")}</strong></div><div><small>{t("최대 예상 손실")}</small><strong className="red">-{money(risk*quantity)}</strong></div><div><small>{t("손익비")}</small><strong>1 : {ratio}</strong></div></div>
+            <button className="simulate" onClick={() => setSimulated(true)}>{simulated ? `✓ ${t("전략 시뮬레이션 완료")}` : t("이 전략 시뮬레이션하기")}</button>
+            <p className="disclaimer">{t("실제 주문이 아닌 모의 거래입니다. AI 분석은 수익을 보장하지 않습니다.")}</p>
           </div>
         </section>
 
         <section className="activity panel">
-          <div className="section-title"><div><h2>최근 Dehua 활동</h2><p>모든 판단과 실행 과정이 투명하게 기록돼요.</p></div><button>전체 기록 →</button></div>
-          <div className="activity-row"><span className="event buy">매수</span><div><strong>SK하이닉스 모의 매수</strong><small>AI 전략 · 2주 · 212,500원</small></div><p>지지 구간 진입 및 거래량 반등 확인</p><time>오늘 14:32</time></div>
-          <div className="activity-row"><span className="event protect">보호</span><div><strong>삼성전자 손절가 조정</strong><small>72,100원 → 72,800원</small></div><p>수익 보호 규칙에 따라 자동 조정</p><time>오늘 11:08</time></div>
+          <div className="section-title"><div><h2>{t("최근 Dehua 활동")}</h2><p>{t("모든 판단과 실행 과정이 투명하게 기록돼요.")}</p></div><button>{t("전체 기록 →")}</button></div>
+          <div className="activity-row"><span className="event buy">{t("매수")}</span><div><strong>SK하이닉스 {t("모의 매수")}</strong><small>{t("AI 전략")} · 2{t("주")} · {money(212500)}</small></div><p>{t("지지 구간 진입 및 거래량 반등 확인")}</p><time>{t("오늘")} 14:32</time></div>
+          <div className="activity-row"><span className="event protect">{t("보호")}</span><div><strong>삼성전자 {t("손절가 조정")}</strong><small>{money(72100)} → {money(72800)}</small></div><p>{t("수익 보호 규칙에 따라 자동 조정")}</p><time>{t("오늘")} 11:08</time></div>
         </section>
       </section>
     </main>
