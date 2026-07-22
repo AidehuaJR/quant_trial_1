@@ -7,16 +7,11 @@ import { localeFor, rangeLabel, type Language } from "./i18n";
 type Props = { name: string; code: string; price: number; entry: number; stop: number; target: number; language: Language };
 type RangeKey = "1일" | "1주" | "1개월" | "1년";
 type Interval = 1 | 3 | 5 | 10 | 15 | 30 | 60 | 120 | 240 | 1440;
+type BarSize = Interval | RangeKey;
 type Bar = { time: UTCTimestamp; open: number; high: number; low: number; close: number; volume: number };
 type Detail = { time: UTCTimestamp; open: number; high: number; low: number; close: number; volume: number } | null;
 
 const ranges: RangeKey[] = ["1일", "1주", "1개월", "1년"];
-const configs: Record<RangeKey, { days: number }> = {
-  "1일": { days: 1 },
-  "1주": { days: 7 },
-  "1개월": { days: 30 },
-  "1년": { days: 365 },
-};
 const intervals: Interval[] = [1, 3, 5, 10, 15, 30, 60, 120, 240];
 
 const chartCopy: Record<Language, Record<string,string>> = {
@@ -30,16 +25,15 @@ function intervalLabel(language: Language, minutes: Interval) { return minutes =
 
 function roundPrice(value: number) { return Math.round(value / 100) * 100; }
 
-function sampleBars(base: number, code: string, range: RangeKey, minutes: Interval): Bar[] {
-  const { days } = configs[range];
-  const requestedDays = range === "1일" ? 30 : range === "1주" ? 45 : days;
+function sampleMinuteBars(base: number, code: string, minutes: Interval): Bar[] {
+  const requestedDays = 30;
   const estimatedBarsPerDay = Math.max(1, Math.ceil(700 / minutes));
   const loadedDays = Math.min(requestedDays, Math.max(5, Math.floor(12000 / estimatedBarsPerDay)));
   const seed = Number(code.slice(-3)) || 41;
   // Fixed Friday snapshot: includes NXT after-market and remains visible on weekends.
   const end = new Date("2026-07-17T11:00:00Z"); // 20:00 KST
   const result: Bar[] = [];
-  let close = base * (range === "1년" ? .72 : range === "1개월" ? .86 : .96);
+  let close = base * .96;
   let index = 0;
 
   if (minutes <= 1440) {
@@ -74,6 +68,32 @@ function sampleBars(base: number, code: string, range: RangeKey, minutes: Interv
   return result;
 }
 
+function samplePeriodBars(base: number, code: string, period: RangeKey): Bar[] {
+  const stepDays: Record<RangeKey, number> = { "1일": 1, "1주": 7, "1개월": 30, "1년": 365 };
+  const counts: Record<RangeKey, number> = { "1일": 120, "1주": 104, "1개월": 84, "1년": 20 };
+  const seed = Number(code.slice(-3)) || 41;
+  const end = new Date("2026-07-17T06:30:00Z");
+  const result: Bar[] = [];
+  let close = base * (period === "1년" ? .45 : period === "1개월" ? .68 : period === "1주" ? .82 : .92);
+  let index = 0;
+
+  for (let offset = counts[period] - 1; offset >= 0; offset--) {
+    const point = new Date(end);
+    point.setUTCDate(end.getUTCDate() - offset * stepDays[period]);
+    if (period === "1일" && (point.getUTCDay() === 0 || point.getUTCDay() === 6)) continue;
+    const wave = Math.sin((index + seed) * .43) * .022 + Math.cos((index + seed) * .16) * .011;
+    const drift = (base - close) * .025;
+    const open = close;
+    close = Math.max(base * .32, close * (1 + wave) + drift);
+    const high = Math.max(open, close) * (1.008 + Math.abs(Math.sin(index)) * .008);
+    const low = Math.min(open, close) * (0.992 - Math.abs(Math.cos(index)) * .007);
+    result.push({ time: Math.floor(point.getTime() / 1000) as UTCTimestamp, open: roundPrice(open), high: roundPrice(high), low: roundPrice(low), close: roundPrice(close), volume: Math.round(420000 + Math.abs(Math.sin(index * .61)) * 2800000) });
+    index++;
+  }
+  if (result.length) result[result.length - 1].close = base;
+  return result;
+}
+
 function dateLabel(time: UTCTimestamp, intraday: boolean, language: Language) {
   return new Intl.DateTimeFormat(localeFor[language], { timeZone: "Asia/Seoul", year: "numeric", month: "2-digit", day: "2-digit", ...(intraday ? { hour: "2-digit", minute: "2-digit", hour12: false } : {}) }).format(new Date(time * 1000));
 }
@@ -81,19 +101,20 @@ function dateLabel(time: UTCTimestamp, intraday: boolean, language: Language) {
 export default function MarketChart({ name, code, price, entry, stop, target, language }: Props) {
   const t = (key: string) => chartText(language,key);
   const container = useRef<HTMLDivElement>(null);
-  const [range, setRange] = useState<RangeKey>("1일");
-  const [interval, setInterval] = useState<Interval>(30);
+  const [barSize, setBarSize] = useState<BarSize>(30);
+  const [minuteInterval, setMinuteInterval] = useState<Interval>(30);
   const [detail, setDetail] = useState<Detail>(null);
   const [refreshKey, setRefreshKey] = useState(0);
   const [lastUpdated, setLastUpdated] = useState("—");
   const [refreshing, setRefreshing] = useState(false);
   function chooseRange(next: RangeKey) {
-    setRange(next);
+    setBarSize(next);
     setDetail(null);
   }
 
   function chooseInterval(next: Interval) {
-    setInterval(next);
+    setMinuteInterval(next);
+    setBarSize(next);
     setDetail(null);
   }
   function refreshChart() {
@@ -108,7 +129,7 @@ export default function MarketChart({ name, code, price, entry, stop, target, la
 
   useEffect(() => {
     if (!container.current) return;
-    const intraday = true;
+    const intraday = typeof barSize === "number";
     const chart = createChart(container.current, {
       height: 350,
       layout: { background: { type: ColorType.Solid, color: "#ffffff" }, textColor: "#7b8883", fontFamily: "Inter, Pretendard, sans-serif", fontSize: 11 },
@@ -120,7 +141,7 @@ export default function MarketChart({ name, code, price, entry, stop, target, la
       handleScroll: { mouseWheel: true, pressedMouseMove: true, horzTouchDrag: true, vertTouchDrag: false },
       handleScale: { axisPressedMouseMove: true, mouseWheel: true, pinch: true },
     });
-    const bars = sampleBars(price, code, range, interval);
+    const bars = typeof barSize === "number" ? sampleMinuteBars(price, code, barSize) : samplePeriodBars(price, code, barSize);
     const candle = chart.addSeries(CandlestickSeries, { upColor: "#e95762", downColor: "#2875d0", borderVisible: false, wickUpColor: "#e95762", wickDownColor: "#2875d0", priceFormat: { type: "price", precision: 0, minMove: 100 } });
     candle.setData(bars.map(bar => ({ time: bar.time, open: bar.open, high: bar.high, low: bar.low, close: bar.close })));
     const volume = chart.addSeries(HistogramSeries, { priceFormat: { type: "volume" }, priceScaleId: "volume" });
@@ -151,18 +172,18 @@ export default function MarketChart({ name, code, price, entry, stop, target, la
     const observer = new ResizeObserver(entries => chart.applyOptions({ width: entries[0].contentRect.width }));
     observer.observe(container.current);
     return () => { window.clearInterval(simulation); observer.disconnect(); chart.remove(); };
-  }, [code, price, entry, stop, target, range, interval, refreshKey, language]);
+  }, [code, price, entry, stop, target, barSize, refreshKey, language]);
 
   const shown = detail;
   return <article className="market-chart panel">
     <div className="chart-head"><div><span className="sample-pill">INTERACTIVE SAMPLE</span><h2>{name} <small>{code}</small></h2><strong>{price.toLocaleString(localeFor[language])} {language === "ko" ? "원" : "KRW"}</strong><em>{t("사용자 제공 기준값 · 실시간 아님")}</em></div><div><div className="chart-tools"><button className={`refresh-chart ${refreshing ? "loading" : ""}`} onClick={refreshChart} disabled={refreshing} aria-label={t("새로고침")}><span>↻</span>{refreshing ? t("불러오는 중") : t("새로고침")}</button></div><p className="interval-label"><i className="connection-dot"/> {t("화면 갱신")} {lastUpdated} · {t("휠로 확대 · 좌우 드래그로 이전 거래일 보기")}</p></div></div>
     <div className="data-clock"><span><i/>{t("시세 기준")}</span><b>2026.07.17 20:00 KST</b><em>{t("마지막 거래일 · NXT 애프터마켓 포함")}</em></div>
     <div className="chart-control-bar">
-      <label className="minute-dropdown"><span>{intervalLabel(language,interval)}</span><select value={interval} onChange={event=>chooseInterval(Number(event.target.value) as Interval)} aria-label="Candle minutes">{intervals.map(item=><option key={item} value={item}>{intervalLabel(language,item)}</option>)}</select><i aria-hidden="true" /></label>
-      <div className="range-bar" aria-label="Chart range">{ranges.map(item=><button type="button" key={item} className={range === item ? "active" : ""} onClick={()=>chooseRange(item)}>{rangeLabel(language,item)}</button>)}</div>
+      <label className={`minute-dropdown ${typeof barSize === "number" ? "active" : ""}`}><span>{intervalLabel(language,minuteInterval)}</span><select value={minuteInterval} onChange={event=>chooseInterval(Number(event.target.value) as Interval)} aria-label="Minute candle length">{intervals.map(item=><option key={item} value={item}>{intervalLabel(language,item)}</option>)}</select><i aria-hidden="true" /></label>
+      <div className="range-bar" aria-label="Candle length">{ranges.map(item=><button type="button" key={item} className={barSize === item ? "active" : ""} onClick={()=>chooseRange(item)}>{rangeLabel(language,item)}</button>)}</div>
     </div>
     <div className="ohlc-strip">
-      {shown ? <><b>{dateLabel(shown.time, true, language)}</b><span>{t("시")} <strong>{shown.open.toLocaleString(localeFor[language])}</strong></span><span>{t("고")} <strong className="rise">{shown.high.toLocaleString(localeFor[language])}</strong></span><span>{t("저")} <strong className="fall">{shown.low.toLocaleString(localeFor[language])}</strong></span><span>{t("종")} <strong>{shown.close.toLocaleString(localeFor[language])}</strong></span><span>{t("거래량")} <strong>{shown.volume.toLocaleString(localeFor[language])}</strong></span></> : <><b>{rangeLabel(language,range)} · {intervalLabel(language,interval)}</b><span>{t("캔들 위에 마우스를 올리면 해당 시각의 상세 정보가 표시됩니다.")}</span></>}
+      {shown ? <><b>{dateLabel(shown.time, typeof barSize === "number", language)}</b><span>{t("시")} <strong>{shown.open.toLocaleString(localeFor[language])}</strong></span><span>{t("고")} <strong className="rise">{shown.high.toLocaleString(localeFor[language])}</strong></span><span>{t("저")} <strong className="fall">{shown.low.toLocaleString(localeFor[language])}</strong></span><span>{t("종")} <strong>{shown.close.toLocaleString(localeFor[language])}</strong></span><span>{t("거래량")} <strong>{shown.volume.toLocaleString(localeFor[language])}</strong></span></> : <><b>{typeof barSize === "number" ? intervalLabel(language, barSize) : rangeLabel(language, barSize)}</b><span>{t("캔들 위에 마우스를 올리면 해당 시각의 상세 정보가 표시됩니다.")}</span></>}
     </div>
     <div ref={container} className="chart-canvas" />
     <div className="chart-legend"><span className="entry">{t("매수 기준")} {entry.toLocaleString(localeFor[language])} KRW</span><span className="stop">{t("손절")} {stop.toLocaleString(localeFor[language])} KRW</span><span className="target">{t("익절")} {target.toLocaleString(localeFor[language])} KRW</span><small>{t("데이터 연결 전 UI·분석 흐름 검토용입니다.")}</small></div>
