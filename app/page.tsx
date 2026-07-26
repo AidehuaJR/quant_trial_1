@@ -137,7 +137,6 @@ export default function Home() {
       }
     }
 
-    setTossStatus("connecting");
     loadTossPrice();
     const timer = window.setInterval(loadTossPrice, 5000);
     return () => {
