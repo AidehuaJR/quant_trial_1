@@ -1,8 +1,10 @@
 "use client";
 
 import { useEffect, useMemo, useState } from "react";
+import type { User } from "@supabase/supabase-js";
 import MarketChart from "./MarketChart";
 import { languageOptions, localeFor, rangeLabel, tr, type Language } from "./i18n";
+import { supabase } from "./supabase";
 
 type Stock = {
   code: string; name: string; price: number; change: number; signal: string;
@@ -63,31 +65,38 @@ export default function Home() {
   const [watchQuery, setWatchQuery] = useState("");
   const [watchRefreshing, setWatchRefreshing] = useState(false);
   const [mobileMenuOpen, setMobileMenuOpen] = useState(false);
+  const [user, setUser] = useState<User | null>(null);
+  const [authReady, setAuthReady] = useState(false);
+  const [loginOpen, setLoginOpen] = useState(false);
+  const [authBusy, setAuthBusy] = useState(false);
+  const [authError, setAuthError] = useState("");
 
   const t = (key: string) => tr(language, key);
   const money = (value: number) => `${Math.round(value).toLocaleString(localeFor[language])} ${t("원")}`;
 
-  useEffect(() => {
-    const saved = window.localStorage.getItem("dehua-language") as Language | null;
-    if (!saved || !languageOptions.some(option => option.value === saved)) return;
-    const timer = window.setTimeout(() => setLanguage(saved), 0);
-    return () => window.clearTimeout(timer);
-  }, []);
-
-  useEffect(() => {
-    const saved = window.localStorage.getItem("dehua-watchlist");
-    if (!saved) return;
-    const timer = window.setTimeout(() => {
-      try { setWatchlist(JSON.parse(saved)); } catch { setWatchlist([]); }
-    }, 0);
-    return () => window.clearTimeout(timer);
-  }, []);
-
   function changeLanguage(next: Language) {
     setLanguage(next);
-    window.localStorage.setItem("dehua-language", next);
     document.documentElement.lang = next === "zh" ? "zh-CN" : next;
   }
+
+  useEffect(() => {
+    let active = true;
+    supabase.auth.getSession().then(({ data }) => {
+      if (!active) return;
+      setUser(data.session?.user ?? null);
+      setAuthReady(true);
+    });
+    const { data: listener } = supabase.auth.onAuthStateChange((_event, session) => {
+      if (!active) return;
+      setUser(session?.user ?? null);
+      setAuthReady(true);
+      if (session?.user) setLoginOpen(false);
+    });
+    return () => {
+      active = false;
+      listener.subscription.unsubscribe();
+    };
+  }, []);
 
   useEffect(() => {
     const update = () => { setMarketTick(value => value + 1); setLastSampleUpdate(new Date().toLocaleTimeString(localeFor[language], { hour12: false })); };
@@ -121,14 +130,19 @@ export default function Home() {
   }
 
   function toggleWatchlist(code: string) {
-    setWatchlist(current => {
-      const next = current.includes(code) ? current.filter(item => item !== code) : [...current, code];
-      window.localStorage.setItem("dehua-watchlist", JSON.stringify(next));
-      return next;
-    });
+    if (!user) {
+      setLoginOpen(true);
+      return;
+    }
+    setWatchlist(current => current.includes(code) ? current.filter(item => item !== code) : [...current, code]);
   }
 
   function openWatchlist() {
+    if (!user) {
+      setLoginOpen(true);
+      setMobileMenuOpen(false);
+      return;
+    }
     setWatchlistOnly(true);
     setWatchQuery("");
     setMobileMenuOpen(false);
@@ -158,8 +172,57 @@ export default function Home() {
     setSimulated(false);
   }
 
+  function requireLogin(action: () => void) {
+    if (!user) {
+      setLoginOpen(true);
+      return;
+    }
+    action();
+  }
+
+  async function startGoogleLogin() {
+    setAuthBusy(true);
+    setAuthError("");
+    const { error } = await supabase.auth.signInWithOAuth({
+      provider: "google",
+      options: {
+        redirectTo: "https://aidehuajr.github.io/quant_trial_1/",
+      },
+    });
+    if (error) {
+      setAuthError(error.message);
+      setAuthBusy(false);
+    }
+  }
+
+  async function signOut() {
+    await supabase.auth.signOut();
+    setWatchlist([]);
+    setAutopilot(false);
+    setSimulated(false);
+    setWatchlistOnly(false);
+  }
+
+  const displayName = user?.user_metadata?.full_name || user?.user_metadata?.name || user?.email || "Guest";
+  const firstName = displayName.split(" ")[0];
+  const initials = displayName.split(/\s+/).slice(0, 2).map((part: string) => part[0]).join("").toUpperCase();
+
   return (
     <main className="shell">
+      {loginOpen && <div className="auth-modal-backdrop" role="presentation" onMouseDown={()=>setLoginOpen(false)}>
+        <section className="auth-modal" role="dialog" aria-modal="true" aria-labelledby="auth-title" onMouseDown={event=>event.stopPropagation()}>
+          <button className="auth-close" aria-label="Close sign in" onClick={()=>setLoginOpen(false)}>×</button>
+          <div className="auth-logo">D</div>
+          <span className="auth-kicker">DEHUA AI ACCOUNT</span>
+          <h2 id="auth-title">Sign in or create an account</h2>
+          <p>Google 계정 하나로 가입과 로그인을 모두 처리합니다. 처음이면 계정이 생성되고, 다시 로그인하면 같은 계정으로 돌아옵니다.</p>
+          <button className="google-auth-button" disabled={authBusy} onClick={startGoogleLogin}><b>G</b>{authBusy ? "Google로 이동 중…" : "Continue with Google"}</button>
+          {authError && <p className="auth-error">{authError}</p>}
+          <div className="auth-divider"><span>secure access</span></div>
+          <ul><li>게스트 활동과 관심종목은 저장되지 않습니다.</li><li>현재는 모의투자 기능이며 실제 주문은 실행하지 않습니다.</li><li>로그인 정보는 Supabase와 Google OAuth가 처리합니다.</li></ul>
+          <a className="account-recovery" href="https://accounts.google.com/signin/recovery" target="_blank" rel="noreferrer">Google 계정 복구 →</a>
+        </section>
+      </div>}
       <button className="mobile-menu-toggle" type="button" aria-label="Open navigation menu" aria-expanded={mobileMenuOpen} aria-controls="primary-sidebar" onClick={()=>setMobileMenuOpen(true)}><span /><span /><span /></button>
       <button className={`mobile-menu-backdrop ${mobileMenuOpen ? "open" : ""}`} type="button" aria-label="Close navigation menu" onClick={()=>setMobileMenuOpen(false)} />
       <aside id="primary-sidebar" className={`sidebar ${mobileMenuOpen ? "mobile-open" : ""}`}>
@@ -167,23 +230,28 @@ export default function Home() {
         <div className="brand"><span className="brandmark">D</span><span>DEHUA <b>AI</b></span></div>
         <nav>
           <button className={`nav ${watchlistOnly ? "" : "active"}`} onClick={openOverview}><span>◫</span> {t("오버뷰")}</button>
-          <button className="nav" onClick={()=>setMobileMenuOpen(false)}><span>⌁</span> {t("오토파일럿")}</button>
+          <button className="nav" onClick={()=>requireLogin(()=>setMobileMenuOpen(false))}><span>⌁</span> {t("오토파일럿")}</button>
           <button className="nav" onClick={()=>setMobileMenuOpen(false)}><span>◎</span> {t("전략")}</button>
-          <button className="nav" onClick={()=>setMobileMenuOpen(false)}><span>↗</span> {t("거래 내역")}</button>
+          <button className="nav" onClick={()=>requireLogin(()=>setMobileMenuOpen(false))}><span>↗</span> {t("거래 내역")}</button>
           <button className={`nav ${watchlistOnly ? "active" : ""}`} onClick={openWatchlist}><span>☆</span> {t("관심종목")}<b className="nav-count">{watchlist.length}</b></button>
         </nav>
         <div className="sidebar-bottom">
           <div className="paper-badge"><i /> PAPER TRADING</div>
-          <button className="nav" onClick={()=>setMobileMenuOpen(false)}><span>⚙</span> {t("설정")}</button>
-          <div className="profile"><div className="avatar">EK</div><div><strong>Edward Kim</strong><small>{t("기본 플랜")}</small></div><span>⌄</span></div>
+          <button className="nav" onClick={()=>requireLogin(()=>setMobileMenuOpen(false))}><span>⚙</span> {t("설정")}</button>
+          {user ? <div className="profile signed-in"><div className="avatar">{initials}</div><div><strong>{displayName}</strong><small>{user.email}</small></div><button onClick={signOut}>로그아웃</button></div> : <button className="sidebar-login" onClick={()=>setLoginOpen(true)}><span>↗</span><div><strong>로그인 / 회원가입</strong><small>개인 데이터 저장</small></div></button>}
         </div>
       </aside>
 
       <section className="workspace">
         <header>
-          <div><p className="eyebrow">{t("2026년 7월 19일 · 장 마감")}</p><h1>{t("좋은 저녁이에요, Edward")}</h1><p className="sub">{t("Dehua가 시장을 지켜보고 있어요.")}</p></div>
-          <div className="header-actions"><label className="language-picker" aria-label="Language"><span>◎</span><select value={language} onChange={e=>changeLanguage(e.target.value as Language)}>{languageOptions.map(option=><option key={option.value} value={option.value}>{option.label}</option>)}</select><i>⌄</i></label><div className={`global-search ${searchOpen && normalizedQuery ? "open" : ""}`} onBlur={e=>{if(!e.currentTarget.contains(e.relatedTarget)) setSearchOpen(false)}}><span>⌕</span><input value={query} onFocus={()=>setSearchOpen(true)} onChange={e=>{setQuery(e.target.value);setSearchOpen(true)}} onKeyDown={e=>{if(e.key === "Escape") setSearchOpen(false); if(e.key === "Enter" && searchSuggestions[0]) chooseStock(searchSuggestions[0])}} placeholder={t("종목명 또는 코드 검색")} autoComplete="off" />{searchOpen && normalizedQuery && <div className="search-suggestions" role="listbox">{searchSuggestions.map(stock=><button key={stock.code} role="option" aria-selected={selected.code === stock.code} onMouseDown={e=>e.preventDefault()} onClick={()=>chooseStock(stock)}><span className={`stock-logo logo-${stock.code}`}>{stock.name.slice(0,1)}</span><span className="suggestion-name"><strong>{stock.name}</strong><small>{stock.code} · {t(stock.sector)}</small></span><span className="ticker-alias">{stock.aliases?.find(alias=>alias.toLowerCase().includes(normalizedQuery)) ?? stock.code}</span></button>)}{searchSuggestions.length === 0 && <div className="no-suggestion"><strong>{t("검색 결과가 없어요")}</strong><small>{t("종목명이나 코드를 다시 확인해 주세요.")}</small></div>}</div>}</div><button className="icon-btn">♢<em>2</em></button><button className="primary" onClick={() => setAutopilot(!autopilot)}><span className={autopilot ? "live-dot on" : "live-dot"}/>{autopilot ? t("오토파일럿 실행 중") : t("오토파일럿 시작")}</button></div>
+          <div><p className="eyebrow">{t("2026년 7월 19일 · 장 마감")}</p><h1>{user ? `좋은 저녁이에요, ${firstName}` : "Dehua AI 공개 미리보기"}</h1><p className="sub">{t("Dehua가 시장을 지켜보고 있어요.")}</p></div>
+          <div className="header-actions"><label className="language-picker" aria-label="Language"><span>◎</span><select value={language} onChange={e=>changeLanguage(e.target.value as Language)}>{languageOptions.map(option=><option key={option.value} value={option.value}>{option.label}</option>)}</select><i>⌄</i></label><div className={`global-search ${searchOpen && normalizedQuery ? "open" : ""}`} onBlur={e=>{if(!e.currentTarget.contains(e.relatedTarget)) setSearchOpen(false)}}><span>⌕</span><input value={query} onFocus={()=>setSearchOpen(true)} onChange={e=>{setQuery(e.target.value);setSearchOpen(true)}} onKeyDown={e=>{if(e.key === "Escape") setSearchOpen(false); if(e.key === "Enter" && searchSuggestions[0]) chooseStock(searchSuggestions[0])}} placeholder={t("종목명 또는 코드 검색")} autoComplete="off" />{searchOpen && normalizedQuery && <div className="search-suggestions" role="listbox">{searchSuggestions.map(stock=><button key={stock.code} role="option" aria-selected={selected.code === stock.code} onMouseDown={e=>e.preventDefault()} onClick={()=>chooseStock(stock)}><span className={`stock-logo logo-${stock.code}`}>{stock.name.slice(0,1)}</span><span className="suggestion-name"><strong>{stock.name}</strong><small>{stock.code} · {t(stock.sector)}</small></span><span className="ticker-alias">{stock.aliases?.find(alias=>alias.toLowerCase().includes(normalizedQuery)) ?? stock.code}</span></button>)}{searchSuggestions.length === 0 && <div className="no-suggestion"><strong>{t("검색 결과가 없어요")}</strong><small>{t("종목명이나 코드를 다시 확인해 주세요.")}</small></div>}</div>}</div>{user ? <button className="auth-status" onClick={signOut}><span>{initials}</span> 로그아웃</button> : <button className="login-button" onClick={()=>setLoginOpen(true)}>{authReady ? "로그인" : "확인 중…"}</button>}<button className="primary" onClick={() => requireLogin(()=>setAutopilot(!autopilot))}><span className={autopilot ? "live-dot on" : "live-dot"}/>{autopilot ? t("오토파일럿 실행 중") : t("오토파일럿 시작")}</button></div>
         </header>
+
+        {!user && <section className="guest-banner">
+          <div><span>PUBLIC PREVIEW</span><strong>로그인 없이 시장 화면을 둘러보세요.</strong><p>차트와 종목 검색은 사용할 수 있지만 관심종목, 전략, 거래 기록 등 개인 데이터는 저장되지 않습니다.</p></div>
+          <button onClick={()=>setLoginOpen(true)}>Google로 로그인 / 회원가입 <b>→</b></button>
+        </section>}
 
         {watchlistOnly ? <section className="watchlist-page">
           <div className="watchlist-hero">
@@ -231,7 +299,7 @@ export default function Home() {
           </article>
 
           <article className={`pilot-card ${autopilot ? "running" : ""}`}>
-            <div className="pilot-heading"><div className="orb"><span /></div><div><p>DEHUA AUTOPILOT</p><h2>{autopilot ? t("자동 운용 중") : t("준비 완료")}</h2></div><label className="switch"><input type="checkbox" checked={autopilot} onChange={() => setAutopilot(!autopilot)} /><span /></label></div>
+            <div className="pilot-heading"><div className="orb"><span /></div><div><p>DEHUA AUTOPILOT</p><h2>{autopilot ? t("자동 운용 중") : t("준비 완료")}</h2></div><label className="switch"><input type="checkbox" checked={autopilot} onChange={() => requireLogin(()=>setAutopilot(!autopilot))} /><span /></label></div>
             <p className="pilot-copy">{autopilot ? t("승인된 5개 종목의 조건을 실시간으로 확인하고 있어요.") : t("설정한 한도 안에서 Dehua가 시장을 관찰하고 모의 거래해요.")}</p>
             <div className="pilot-stats"><div><small>{t("오늘 거래")}</small><strong>{autopilot ? "3" : "0"}{t("건")}</strong></div><div><small>{t("일일 손실 한도")}</small><strong>2.0%</strong></div><div><small>{t("리스크 사용")}</small><strong>{autopilot ? "18" : "0"}%</strong></div></div>
             <button className="pilot-settings">{t("운용 설정 보기")} <span>→</span></button>
@@ -288,7 +356,7 @@ export default function Home() {
               </div>
             </>}
             <div className="summary"><div><small>{t("예상 수량")}</small><strong>{quantity}{t("주")}</strong></div><div><small>{t("최대 예상 손실")}</small><strong className="red">-{money(risk*quantity)}</strong></div><div><small>{t("손익비")}</small><strong>1 : {ratio}</strong></div></div>
-            <button className="simulate" onClick={() => setSimulated(true)}>{simulated ? `✓ ${t("전략 시뮬레이션 완료")}` : t("이 전략 시뮬레이션하기")}</button>
+            <button className="simulate" onClick={() => requireLogin(()=>setSimulated(true))}>{simulated ? `✓ ${t("전략 시뮬레이션 완료")}` : t("이 전략 시뮬레이션하기")}</button>
             <p className="disclaimer">{t("실제 주문이 아닌 모의 거래입니다. AI 분석은 수익을 보장하지 않습니다.")}</p>
           </div>
         </section>
