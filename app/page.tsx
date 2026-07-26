@@ -69,6 +69,7 @@ export default function Home() {
   const [analysisTime, setAnalysisTime] = useState("방금 전");
   const [language, setLanguage] = useState<Language>("ko");
   const [watchlist, setWatchlist] = useState<string[]>([]);
+  const [watchlistSync, setWatchlistSync] = useState<"idle" | "loading" | "saved" | "error">("idle");
   const [watchlistOnly, setWatchlistOnly] = useState(false);
   const [watchQuery, setWatchQuery] = useState("");
   const [watchRefreshing, setWatchRefreshing] = useState(false);
@@ -107,6 +108,39 @@ export default function Home() {
       listener.subscription.unsubscribe();
     };
   }, []);
+
+  useEffect(() => {
+    let active = true;
+
+    async function loadWatchlist() {
+      if (!user) {
+        setWatchlist([]);
+        setWatchlistSync("idle");
+        return;
+      }
+
+      setWatchlistSync("loading");
+      const { data, error } = await supabase
+        .from("watchlist_items")
+        .select("symbol")
+        .order("created_at", { ascending: true });
+
+      if (!active) return;
+      if (error) {
+        console.error("Unable to load watchlist", error);
+        setWatchlistSync("error");
+        return;
+      }
+
+      setWatchlist((data ?? []).map(item => item.symbol));
+      setWatchlistSync("saved");
+    }
+
+    loadWatchlist();
+    return () => {
+      active = false;
+    };
+  }, [user]);
 
   useEffect(() => {
     const update = () => { setMarketTick(value => value + 1); setLastSampleUpdate(new Date().toLocaleTimeString(localeFor[language], { hour12: false })); };
@@ -170,12 +204,38 @@ export default function Home() {
     setSearchOpen(false);
   }
 
-  function toggleWatchlist(code: string) {
+  async function toggleWatchlist(code: string) {
     if (!user) {
       setLoginOpen(true);
       return;
     }
-    setWatchlist(current => current.includes(code) ? current.filter(item => item !== code) : [...current, code]);
+
+    const wasSaved = watchlist.includes(code);
+    const nextWatchlist = wasSaved
+      ? watchlist.filter(item => item !== code)
+      : [...watchlist, code];
+
+    setWatchlist(nextWatchlist);
+    setWatchlistSync("loading");
+
+    const { error } = wasSaved
+      ? await supabase
+          .from("watchlist_items")
+          .delete()
+          .eq("user_id", user.id)
+          .eq("symbol", code)
+      : await supabase
+          .from("watchlist_items")
+          .insert({ user_id: user.id, symbol: code });
+
+    if (error) {
+      console.error("Unable to sync watchlist", error);
+      setWatchlist(watchlist);
+      setWatchlistSync("error");
+      return;
+    }
+
+    setWatchlistSync("saved");
   }
 
   function openWatchlist() {
@@ -301,7 +361,7 @@ export default function Home() {
           </div>
           <div className="watchlist-layout">
             <article className="panel watchlist-saved">
-              <div className="section-title"><div><h2>{t("저장된 관심종목")}</h2><p>{savedStocks.length}{t("개")} · {t("브라우저에 안전하게 저장됩니다.")}</p></div></div>
+              <div className="section-title"><div><h2>{t("저장된 관심종목")}</h2><p>{savedStocks.length}{t("개")} · {watchlistSync === "loading" ? "클라우드 동기화 중…" : watchlistSync === "error" ? "저장 실패 · Supabase 설정을 확인하세요." : "계정에 안전하게 저장됨"}</p></div></div>
               <div className="saved-stock-list">
                 {savedStocks.map(stock=><div className="saved-stock" key={stock.code}>
                   <button className="saved-stock-main" onClick={()=>{chooseStock(stock);setWatchlistOnly(false)}}>
