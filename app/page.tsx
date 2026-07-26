@@ -11,6 +11,14 @@ type Stock = {
   confidence: number; spark: number[]; sector: string; aliases?: string[];
 };
 
+type TossQuote = {
+  price: number;
+  timestamp: string;
+  currency: string;
+};
+
+const TOSS_GATEWAY_URL = "https://54-117-0-4.sslip.io";
+
 const stocks: Stock[] = [
   { code: "005930", name: "삼성전자", price: 255000, change: 1.22, signal: "매수 관찰", confidence: 72, sector: "반도체", aliases: ["SSNLF", "SMSN", "SAMSUNG"], spark: [44,43,46,45,49,51,50,54,52,57,60,62] },
   { code: "000660", name: "SK하이닉스", price: 214500, change: 2.14, signal: "상승 추세", confidence: 81, sector: "반도체", aliases: ["SKHY", "SK HYNIX", "HYNIX"], spark: [38,41,39,44,49,48,53,55,58,56,62,66] },
@@ -70,6 +78,8 @@ export default function Home() {
   const [loginOpen, setLoginOpen] = useState(false);
   const [authBusy, setAuthBusy] = useState(false);
   const [authError, setAuthError] = useState("");
+  const [tossPrices, setTossPrices] = useState<Record<string, TossQuote>>({});
+  const [tossStatus, setTossStatus] = useState<"connecting" | "live" | "fallback">("connecting");
 
   const t = (key: string) => tr(language, key);
   const money = (value: number) => `${Math.round(value).toLocaleString(localeFor[language])} ${t("원")}`;
@@ -105,6 +115,37 @@ export default function Home() {
     return () => window.clearInterval(timer);
   }, [language]);
 
+  useEffect(() => {
+    let active = true;
+
+    async function loadTossPrice() {
+      try {
+        const response = await fetch(`${TOSS_GATEWAY_URL}/api/prices?symbols=${encodeURIComponent(selected.code)}`, { cache: "no-store" });
+        if (!response.ok) throw new Error(`Toss gateway returned ${response.status}`);
+        const payload = await response.json() as { result?: Array<{ symbol: string; timestamp: string; lastPrice: string; currency?: string }> };
+        const quote = payload.result?.find(item => item.symbol === selected.code) ?? payload.result?.[0];
+        const price = Number(quote?.lastPrice);
+        if (!quote || !Number.isFinite(price) || price <= 0) throw new Error("Invalid Toss quote");
+        if (!active) return;
+        setTossPrices(current => ({
+          ...current,
+          [selected.code]: { price, timestamp: quote.timestamp, currency: quote.currency ?? "KRW" },
+        }));
+        setTossStatus("live");
+      } catch {
+        if (active) setTossStatus("fallback");
+      }
+    }
+
+    setTossStatus("connecting");
+    loadTossPrice();
+    const timer = window.setInterval(loadTossPrice, 5000);
+    return () => {
+      active = false;
+      window.clearInterval(timer);
+    };
+  }, [selected.code]);
+
   const risk = useMemo(() => Math.max(0, entry - stop), [entry, stop]);
   const reward = useMemo(() => Math.max(0, target - entry), [entry, target]);
   const quantity = Math.max(1, Math.floor(capital / Math.max(entry, 1)));
@@ -117,7 +158,8 @@ export default function Home() {
   const visibleStocks = showAll || query ? filteredStocks : filteredStocks.slice(0, 5);
   const savedStocks = stocks.filter(stock => watchlist.includes(stock.code));
   const watchCandidates = stocks.filter(stock => !watchlist.includes(stock.code) && `${stock.name} ${stock.code} ${stock.sector} ${(stock.aliases ?? []).join(" ")}`.toLowerCase().includes(watchQuery.trim().toLowerCase()));
-  const samplePrice = (stock: Stock) => Math.round((stock.price * (1 + Math.sin((marketTick + Number(stock.code.slice(-2))) * .71) * .00035)) / 100) * 100;
+  const samplePrice = (stock: Stock) => tossPrices[stock.code]?.price ?? Math.round((stock.price * (1 + Math.sin((marketTick + Number(stock.code.slice(-2))) * .71) * .00035)) / 100) * 100;
+  const selectedQuote = tossPrices[selected.code];
 
   function chooseStock(stock: Stock) {
     setSelected(stock);
@@ -316,11 +358,11 @@ export default function Home() {
           </button>)}</div> : <button className="overview-watch-empty" onClick={openWatchlist}><span>＋</span><div><strong>{t("추가된 관심종목이 없습니다.")}</strong><small>{t("관심종목 페이지에서 종목을 추가해 보세요.")}</small></div><i>→</i></button>}
         </section>
 
-        <MarketChart name={selected.name} code={selected.code} price={selected.price} entry={entry} stop={stop} target={target} language={language} />
+        <MarketChart name={selected.name} code={selected.code} price={selectedQuote?.price ?? selected.price} entry={entry} stop={stop} target={target} language={language} dataSource={tossStatus} marketTimestamp={selectedQuote?.timestamp} />
 
         <section className="content-grid">
           <div className="market-panel panel">
-            <div className="section-title"><div><h2>{t("주요 종목")} <i className="sim-tag pulse">SIMULATED 1s</i></h2><p>{query ? `“${query}” ${t("검색 결과")} ${filteredStocks.length}${t("개")}` : `${t("데이터 연결 전 시세 동작 미리보기")} · ${lastSampleUpdate}`}</p></div><button onClick={()=>setShowAll(!showAll)}>{showAll ? t("간단히 보기 ↑") : t("전체보기 →")}</button></div>
+            <div className="section-title"><div><h2>{t("주요 종목")} <i className="sim-tag pulse">{tossStatus === "live" ? "TOSS LIVE" : tossStatus === "connecting" ? "TOSS CONNECTING" : "DEMO FALLBACK"}</i></h2><p>{query ? `“${query}” ${t("검색 결과")} ${filteredStocks.length}${t("개")}` : `${t("데이터 연결 전 시세 동작 미리보기")} · ${lastSampleUpdate}`}</p></div><button onClick={()=>setShowAll(!showAll)}>{showAll ? t("간단히 보기 ↑") : t("전체보기 →")}</button></div>
             <div className="stock-list">
               {visibleStocks.map(stock => <button key={stock.code} className={`stock-row ${selected.code === stock.code ? "selected" : ""}`} onClick={() => chooseStock(stock)}>
                 <div className={`stock-logo logo-${stock.code}`}>{stock.name.slice(0,1)}</div>
