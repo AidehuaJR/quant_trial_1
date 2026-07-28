@@ -1,6 +1,6 @@
 "use client";
 
-import { CandlestickSeries, ColorType, createChart, HistogramSeries, type UTCTimestamp } from "lightweight-charts";
+import { CandlestickSeries, ColorType, createChart, HistogramSeries, type IChartApi, type ISeriesApi, type UTCTimestamp } from "lightweight-charts";
 import { useEffect, useRef, useState } from "react";
 import { localeFor, rangeLabel, type Language } from "./i18n";
 
@@ -111,6 +111,9 @@ function dateLabel(time: UTCTimestamp, intraday: boolean, language: Language) {
 export default function MarketChart({ name, code, price, entry, stop, target, language, dataSource = "fallback", marketTimestamp }: Props) {
   const t = (key: string) => chartText(language,key);
   const container = useRef<HTMLDivElement>(null);
+  const chartRef = useRef<IChartApi | null>(null);
+  const candleRef = useRef<ISeriesApi<"Candlestick"> | null>(null);
+  const liveBarRef = useRef<Omit<Bar, "volume"> | null>(null);
   const [barSize, setBarSize] = useState<BarSize>(30);
   const [minuteInterval, setMinuteInterval] = useState<Interval>(30);
   const [detail, setDetail] = useState<Detail>(null);
@@ -153,6 +156,9 @@ export default function MarketChart({ name, code, price, entry, stop, target, la
     });
     const bars = typeof barSize === "number" ? sampleMinuteBars(price, code, barSize) : samplePeriodBars(price, code, barSize);
     const candle = chart.addSeries(CandlestickSeries, { upColor: "#e95762", downColor: "#2875d0", borderVisible: false, wickUpColor: "#e95762", wickDownColor: "#2875d0", priceFormat: { type: "price", precision: 0, minMove: 100 } });
+    chartRef.current = chart;
+    candleRef.current = candle;
+    liveBarRef.current = null;
     candle.setData(bars.map(bar => ({ time: bar.time, open: bar.open, high: bar.high, low: bar.low, close: bar.close })));
     const volume = chart.addSeries(HistogramSeries, { priceFormat: { type: "volume" }, priceScaleId: "volume" });
     volume.priceScale().applyOptions({ scaleMargins: { top: .82, bottom: 0 } });
@@ -167,22 +173,40 @@ export default function MarketChart({ name, code, price, entry, stop, target, la
       if (candlePoint?.open == null) { setDetail(null); return; }
       setDetail({ time: param.time as UTCTimestamp, open: candlePoint.open, high: candlePoint.high!, low: candlePoint.low!, close: candlePoint.close!, volume: volumePoint?.value ?? 0 });
     });
-    let liveClose = bars.at(-1)?.close ?? price;
-    const lastTime = bars.at(-1)?.time;
-    const simulation = window.setInterval(() => {
-      if (!lastTime) return;
-      liveClose = roundPrice(liveClose * (1 + Math.sin(Date.now()/1300 + Number(code.slice(-2))) * .00022));
-      const previous = bars.at(-1)!;
-      candle.update({ time: lastTime, open: previous.open, high: Math.max(previous.high, liveClose), low: Math.min(previous.low, liveClose), close: liveClose });
-      setLastUpdated(new Date().toLocaleTimeString(localeFor[language], { hour12: false }));
-    }, 1000);
-    setLastUpdated(new Date().toLocaleTimeString(localeFor[language], { hour12: false }));
     if (bars.length > 5) chart.timeScale().setVisibleLogicalRange({ from: bars.length - 5.5, to: bars.length - .25 });
     else chart.timeScale().fitContent();
     const observer = new ResizeObserver(entries => chart.applyOptions({ width: entries[0].contentRect.width }));
     observer.observe(container.current);
-    return () => { window.clearInterval(simulation); observer.disconnect(); chart.remove(); };
-  }, [code, price, entry, stop, target, barSize, refreshKey, language]);
+    return () => {
+      observer.disconnect();
+      candleRef.current = null;
+      chartRef.current = null;
+      liveBarRef.current = null;
+      chart.remove();
+    };
+  }, [code, entry, stop, target, barSize, refreshKey, language]);
+
+  useEffect(() => {
+    const candle = candleRef.current;
+    if (!candle || dataSource !== "live" || !marketTimestamp || !Number.isFinite(price) || price <= 0) return;
+
+    const quoteTime = new Date(marketTimestamp).getTime();
+    if (!Number.isFinite(quoteTime)) return;
+
+    const stepSeconds = typeof barSize === "number"
+      ? barSize * 60
+      : ({ "1일": 86_400, "1주": 604_800, "1개월": 2_592_000, "1년": 31_536_000 } as const)[barSize];
+    const bucket = Math.floor(quoteTime / 1000 / stepSeconds) * stepSeconds as UTCTimestamp;
+    const previous = liveBarRef.current;
+    const next = previous?.time === bucket
+      ? { time: bucket, open: previous.open, high: Math.max(previous.high, price), low: Math.min(previous.low, price), close: price }
+      : { time: bucket, open: price, high: price, low: price, close: price };
+
+    liveBarRef.current = next;
+    candle.update(next);
+    setLastUpdated(new Date(marketTimestamp).toLocaleTimeString(localeFor[language], { timeZone: "Asia/Seoul", hour12: false }));
+    chartRef.current?.timeScale().scrollToRealTime();
+  }, [price, marketTimestamp, dataSource, barSize, language]);
 
   const shown = detail;
   return <article className="market-chart panel">
@@ -196,6 +220,6 @@ export default function MarketChart({ name, code, price, entry, stop, target, la
       {shown ? <><b>{dateLabel(shown.time, typeof barSize === "number", language)}</b><span>{t("시")} <strong>{shown.open.toLocaleString(localeFor[language])}</strong></span><span>{t("고")} <strong className="rise">{shown.high.toLocaleString(localeFor[language])}</strong></span><span>{t("저")} <strong className="fall">{shown.low.toLocaleString(localeFor[language])}</strong></span><span>{t("종")} <strong>{shown.close.toLocaleString(localeFor[language])}</strong></span><span>{t("거래량")} <strong>{shown.volume.toLocaleString(localeFor[language])}</strong></span></> : <><b>{typeof barSize === "number" ? intervalLabel(language, barSize) : rangeLabel(language, barSize)}</b><span>{t("캔들 위에 마우스를 올리면 해당 시각의 상세 정보가 표시됩니다.")}</span></>}
     </div>
     <div ref={container} className="chart-canvas" />
-    <div className="chart-legend"><span className="entry">{t("매수 기준")} {entry.toLocaleString(localeFor[language])} KRW</span><span className="stop">{t("손절")} {stop.toLocaleString(localeFor[language])} KRW</span><span className="target">{t("익절")} {target.toLocaleString(localeFor[language])} KRW</span><small>{dataSource === "live" ? "현재가는 실데이터 · 과거 캔들은 아직 데모" : t("데이터 연결 전 UI·분석 흐름 검토용입니다.")}</small></div>
+    <div className="chart-legend"><span className="entry">{t("매수 기준")} {entry.toLocaleString(localeFor[language])} KRW</span><span className="stop">{t("손절")} {stop.toLocaleString(localeFor[language])} KRW</span><span className="target">{t("익절")} {target.toLocaleString(localeFor[language])} KRW</span><small>{dataSource === "live" ? "현재가·최신 봉은 5초마다 실데이터 · 과거 캔들은 아직 데모" : t("데이터 연결 전 UI·분석 흐름 검토용입니다.")}</small></div>
   </article>;
 }
