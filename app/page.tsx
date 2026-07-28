@@ -3,6 +3,7 @@
 import { useEffect, useMemo, useState } from "react";
 import type { User } from "@supabase/supabase-js";
 import MarketChart from "./MarketChart";
+import TradingWorkspace, { type TradingWorkspaceMode } from "./TradingWorkspace";
 import { languageOptions, localeFor, rangeLabel, tr, type Language } from "./i18n";
 import { supabase } from "./supabase";
 
@@ -71,6 +72,7 @@ export default function Home() {
   const [watchlist, setWatchlist] = useState<string[]>([]);
   const [watchlistSync, setWatchlistSync] = useState<"idle" | "loading" | "saved" | "error">("idle");
   const [watchlistOnly, setWatchlistOnly] = useState(false);
+  const [workspaceMode, setWorkspaceMode] = useState<TradingWorkspaceMode>("overview");
   const [watchQuery, setWatchQuery] = useState("");
   const [watchRefreshing, setWatchRefreshing] = useState(false);
   const [mobileMenuOpen, setMobileMenuOpen] = useState(false);
@@ -250,6 +252,7 @@ export default function Home() {
   }
 
   function openOverview() {
+    setWorkspaceMode("overview");
     setWatchlistOnly(false);
     setMobileMenuOpen(false);
   }
@@ -330,7 +333,10 @@ export default function Home() {
         <button className="mobile-menu-close" type="button" aria-label="Close navigation menu" onClick={()=>setMobileMenuOpen(false)}>×</button>
         <div className="brand"><span className="brandmark">D</span><span>DEHUA <b>AI</b></span></div>
         <nav>
-          <button className={`nav ${watchlistOnly ? "" : "active"}`} onClick={openOverview}><span>◫</span> {t("오버뷰")}</button>
+          <button className={`nav ${workspaceMode === "overview" && !watchlistOnly ? "active" : ""}`} onClick={openOverview}><span>◫</span> {t("오버뷰")}</button>
+          <button className={`nav ${workspaceMode === "paper" ? "active" : ""}`} onClick={()=>{setWorkspaceMode("paper");setWatchlistOnly(false);setMobileMenuOpen(false)}}><span>◉</span> Paper Trading</button>
+          <button className={`nav ${workspaceMode === "backtest" ? "active" : ""}`} onClick={()=>{setWorkspaceMode("backtest");setWatchlistOnly(false);setMobileMenuOpen(false)}}><span>◫</span> Backtest</button>
+          <button className={`nav live-nav ${workspaceMode === "live" ? "active" : ""}`} onClick={()=>{setWorkspaceMode("live");setWatchlistOnly(false);setMobileMenuOpen(false)}}><span>◆</span> Live Trading <i>LOCKED</i></button>
           <button className="nav" onClick={()=>requireLogin(()=>setMobileMenuOpen(false))}><span>⌁</span> {t("오토파일럿")}</button>
           <button className="nav" onClick={()=>setMobileMenuOpen(false)}><span>◎</span> {t("전략")}</button>
           <button className="nav" onClick={()=>requireLogin(()=>setMobileMenuOpen(false))}><span>↗</span> {t("거래 내역")}</button>
@@ -354,7 +360,7 @@ export default function Home() {
           <button onClick={()=>setLoginOpen(true)}>Google로 로그인 / 회원가입 <b>→</b></button>
         </section>}
 
-        {watchlistOnly ? <section className="watchlist-page">
+        {workspaceMode !== "overview" ? <TradingWorkspace mode={workspaceMode} onModeChange={(nextMode)=>{setWorkspaceMode(nextMode);setWatchlistOnly(false)}} stockName={selected.name} stockCode={selected.code} price={selectedQuote?.price ?? selected.price} isSignedIn={Boolean(user)} onLogin={()=>setLoginOpen(true)} /> : watchlistOnly ? <section className="watchlist-page">
           <div className="watchlist-hero">
             <div><span className="ai-label">PERSONAL WATCHLIST</span><h2>{t("관심종목")}</h2><p>{t("관심 있는 종목을 별도 공간에서 관리하고 빠르게 확인하세요.")}</p></div>
             <div className="watchlist-hero-actions"><div className="feed-status"><i/>{t("데모 시세")} · {t("마지막 갱신")} {lastSampleUpdate}</div><button className={`feed-refresh ${watchRefreshing?"loading":""}`} onClick={refreshWatchlist}><span>↻</span>{t("새로고침")}</button><button className="back-overview" onClick={()=>setWatchlistOnly(false)}>← {t("주요 종목으로 돌아가기")}</button></div>
