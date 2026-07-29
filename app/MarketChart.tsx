@@ -202,12 +202,6 @@ export default function MarketChart({ name, code, price, entry, stop, target, la
   }, [code, entry, stop, target, barSize, refreshKey, language]);
 
   useEffect(() => {
-    if (typeof barSize !== "number") {
-      setCandleStatus("idle");
-      setLiveCandleCount(0);
-      return;
-    }
-
     let cancelled = false;
     let controller: AbortController | null = null;
 
@@ -215,14 +209,20 @@ export default function MarketChart({ name, code, price, entry, stop, target, la
       controller?.abort();
       controller = new AbortController();
       try {
+        const interval = typeof barSize === "number" ? `${barSize}m` : "1d";
         const response = await fetch(
-          `${TOSS_GATEWAY_URL}/api/candles/${encodeURIComponent(code)}?interval=${barSize}m&_ts=${Date.now()}`,
+          `${TOSS_GATEWAY_URL}/api/candles/${encodeURIComponent(code)}?interval=${interval}&count=200&_ts=${Date.now()}`,
           { cache: "no-store", signal: controller.signal }
         );
         if (!response.ok) throw new Error(`Toss candles HTTP ${response.status}`);
 
-        const payload = await response.json() as { result?: TossCandle[] };
-        const bars = (payload.result ?? [])
+        const payload = await response.json() as {
+          result?: TossCandle[] | { candles?: TossCandle[]; nextBefore?: string | null };
+        };
+        const rawCandles = Array.isArray(payload.result)
+          ? payload.result
+          : payload.result?.candles ?? [];
+        const parsedBars = rawCandles
           .map(item => ({
             time: Math.floor(new Date(item.timestamp).getTime() / 1000) as UTCTimestamp,
             open: Number(item.openPrice),
@@ -240,6 +240,7 @@ export default function MarketChart({ name, code, price, entry, stop, target, la
             Number.isFinite(item.volume)
           )
           .sort((a, b) => a.time - b.time);
+        const bars = Array.from(new Map(parsedBars.map(bar => [bar.time, bar])).values());
 
         if (!bars.length) throw new Error("Toss returned no candles");
         if (cancelled || !candleRef.current || !volumeRef.current) return;
