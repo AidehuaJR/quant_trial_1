@@ -214,8 +214,6 @@ export default function MarketChart({ name, code, price, entry, stop, target, la
     async function loadCandles() {
       controller?.abort();
       controller = new AbortController();
-      if (candleStatus !== "live") setCandleStatus("connecting");
-
       try {
         const response = await fetch(
           `${TOSS_GATEWAY_URL}/api/candles/${encodeURIComponent(code)}?interval=${barSize}m&_ts=${Date.now()}`,
@@ -260,7 +258,7 @@ export default function MarketChart({ name, code, price, entry, stop, target, la
           timeZone: "Asia/Seoul",
           hour12: false,
         }));
-        chartRef.current.timeScale().setVisibleLogicalRange({
+        chartRef.current?.timeScale().setVisibleLogicalRange({
           from: Math.max(0, bars.length - 5.5),
           to: bars.length - .25,
         });
@@ -271,6 +269,7 @@ export default function MarketChart({ name, code, price, entry, stop, target, la
       }
     }
 
+    setCandleStatus("connecting");
     void loadCandles();
     const timer = window.setInterval(loadCandles, 5_000);
     return () => {
