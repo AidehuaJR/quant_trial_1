@@ -28,6 +28,10 @@ type TossCandle = {
   closePrice: string | number;
   volume: string | number;
 };
+type TossCandlePage = {
+  result?: TossCandle[];
+  nextBefore?: string | null;
+};
 
 const TOSS_GATEWAY_URL = "https://54-117-0-4.sslip.io";
 
@@ -44,6 +48,34 @@ function chartText(language: Language, key: string) { return chartCopy[language]
 function intervalLabel(language: Language, minutes: Interval) { return minutes === 1440 ? rangeLabel(language, "1일") : `${minutes}${chartText(language,"분")}`; }
 
 function roundPrice(value: number) { return Math.round(value / 100) * 100; }
+
+function tossCandlesToBars(items: TossCandle[]): Bar[] {
+  return items
+    .map(item => ({
+      time: Math.floor(new Date(item.timestamp).getTime() / 1000) as UTCTimestamp,
+      open: Number(item.openPrice),
+      high: Number(item.highPrice),
+      low: Number(item.lowPrice),
+      close: Number(item.closePrice),
+      volume: Number(item.volume),
+    }))
+    .filter(item =>
+      Number.isFinite(item.time) &&
+      Number.isFinite(item.open) &&
+      Number.isFinite(item.high) &&
+      Number.isFinite(item.low) &&
+      Number.isFinite(item.close) &&
+      Number.isFinite(item.volume)
+    )
+    .sort((a, b) => a.time - b.time);
+}
+
+function mergeBars(existing: Bar[], incoming: Bar[]): Bar[] {
+  const byTimestamp = new Map<number, Bar>();
+  for (const bar of existing) byTimestamp.set(bar.time, bar);
+  for (const bar of incoming) byTimestamp.set(bar.time, bar);
+  return Array.from(byTimestamp.values()).sort((a, b) => a.time - b.time);
+}
 
 function sampleMinuteBars(base: number, code: string, minutes: Interval): Bar[] {
   const requestedDays = 30;
@@ -125,6 +157,7 @@ export default function MarketChart({ name, code, price, entry, stop, target, la
   const candleRef = useRef<ISeriesApi<"Candlestick"> | null>(null);
   const volumeRef = useRef<ISeriesApi<"Histogram"> | null>(null);
   const liveBarRef = useRef<Omit<Bar, "volume"> | null>(null);
+  const candleHistoryRef = useRef<Bar[]>([]);
   const [barSize, setBarSize] = useState<BarSize>(30);
   const [minuteInterval, setMinuteInterval] = useState<Interval>(30);
   const [detail, setDetail] = useState<Detail>(null);
@@ -197,6 +230,7 @@ export default function MarketChart({ name, code, price, entry, stop, target, la
       volumeRef.current = null;
       chartRef.current = null;
       liveBarRef.current = null;
+      candleHistoryRef.current = [];
       chart.remove();
     };
   }, [code, entry, stop, target, barSize, refreshKey, language]);
@@ -205,63 +239,77 @@ export default function MarketChart({ name, code, price, entry, stop, target, la
     if (typeof barSize !== "number") {
       setCandleStatus("idle");
       setLiveCandleCount(0);
+      candleHistoryRef.current = [];
       return;
     }
 
     let cancelled = false;
+    let timer: number | null = null;
     let controller: AbortController | null = null;
+    const historyStart = Math.floor((Date.now() - 14 * 24 * 60 * 60 * 1000) / 1000);
 
-    async function loadCandles() {
-      controller?.abort();
+    async function fetchCandlePage(before?: string) {
       controller = new AbortController();
-      try {
-        const response = await fetch(
-          `${TOSS_GATEWAY_URL}/api/candles/${encodeURIComponent(code)}?interval=${barSize}m&_ts=${Date.now()}`,
-          { cache: "no-store", signal: controller.signal }
-        );
-        if (!response.ok) throw new Error(`Toss candles HTTP ${response.status}`);
+      const query = new URLSearchParams({
+        interval: `${barSize}m`,
+        count: "500",
+        _ts: String(Date.now()),
+      });
+      if (before) query.set("before", before);
+      const response = await fetch(
+        `${TOSS_GATEWAY_URL}/api/candles/${encodeURIComponent(code)}?${query.toString()}`,
+        { cache: "no-store", signal: controller.signal }
+      );
+      if (!response.ok) throw new Error(`Toss candles HTTP ${response.status}`);
+      return await response.json() as TossCandlePage;
+    }
 
-        const payload = await response.json() as { result?: TossCandle[] };
-        const bars = (payload.result ?? [])
-          .map(item => ({
-            time: Math.floor(new Date(item.timestamp).getTime() / 1000) as UTCTimestamp,
-            open: Number(item.openPrice),
-            high: Number(item.highPrice),
-            low: Number(item.lowPrice),
-            close: Number(item.closePrice),
-            volume: Number(item.volume),
-          }))
-          .filter(item =>
-            Number.isFinite(item.time) &&
-            Number.isFinite(item.open) &&
-            Number.isFinite(item.high) &&
-            Number.isFinite(item.low) &&
-            Number.isFinite(item.close) &&
-            Number.isFinite(item.volume)
-          )
-          .sort((a, b) => a.time - b.time);
-
-        if (!bars.length) throw new Error("Toss returned no candles");
-        if (cancelled || !candleRef.current || !volumeRef.current) return;
-
-        candleRef.current.setData(bars.map(({ time, open, high, low, close }) => ({ time, open, high, low, close })));
-        volumeRef.current.setData(bars.map(bar => ({
-          time: bar.time,
-          value: bar.volume,
-          color: bar.close >= bar.open ? "#ef9ba14a" : "#77a9df4d",
-        })));
-        const latest = bars[bars.length - 1];
-        liveBarRef.current = { time: latest.time, open: latest.open, high: latest.high, low: latest.low, close: latest.close };
-        setLiveCandleCount(bars.length);
-        setCandleStatus("live");
-        setLastUpdated(new Date().toLocaleTimeString(localeFor[language], {
-          timeZone: "Asia/Seoul",
-          hour12: false,
-        }));
+    function renderBars(bars: Bar[], keepCurrentView = false) {
+      if (cancelled || !bars.length || !candleRef.current || !volumeRef.current) return;
+      candleHistoryRef.current = bars;
+      candleRef.current.setData(bars.map(({ time, open, high, low, close }) => ({ time, open, high, low, close })));
+      volumeRef.current.setData(bars.map(bar => ({
+        time: bar.time,
+        value: bar.volume,
+        color: bar.close >= bar.open ? "#ef9ba14a" : "#77a9df4d",
+      })));
+      const latest = bars[bars.length - 1];
+      liveBarRef.current = { time: latest.time, open: latest.open, high: latest.high, low: latest.low, close: latest.close };
+      setLiveCandleCount(bars.length);
+      setCandleStatus("live");
+      setLastUpdated(new Date().toLocaleTimeString(localeFor[language], {
+        timeZone: "Asia/Seoul",
+        hour12: false,
+      }));
+      if (!keepCurrentView) {
         chartRef.current?.timeScale().setVisibleLogicalRange({
           from: Math.max(0, bars.length - 5.5),
           to: bars.length - .25,
         });
+      }
+    }
+
+    async function loadInitialHistory() {
+      try {
+        let bars: Bar[] = [];
+        let before: string | undefined;
+        const visitedCursors = new Set<string>();
+
+        for (let page = 0; page < 80; page += 1) {
+          const payload = await fetchCandlePage(before);
+          const pageBars = tossCandlesToBars(payload.result ?? []);
+          if (!pageBars.length) break;
+          bars = mergeBars(bars, pageBars);
+
+          const oldest = bars[0]?.time ?? Number.POSITIVE_INFINITY;
+          const nextBefore = payload.nextBefore ?? undefined;
+          if (oldest <= historyStart || !nextBefore || visitedCursors.has(nextBefore)) break;
+          visitedCursors.add(nextBefore);
+          before = nextBefore;
+        }
+
+        if (!bars.length) throw new Error("Toss returned no candles");
+        renderBars(bars);
       } catch (error) {
         if (cancelled || (error instanceof DOMException && error.name === "AbortError")) return;
         setCandleStatus("fallback");
@@ -269,13 +317,25 @@ export default function MarketChart({ name, code, price, entry, stop, target, la
       }
     }
 
+    async function refreshLatest() {
+      try {
+        const payload = await fetchCandlePage();
+        const latestBars = tossCandlesToBars(payload.result ?? []);
+        if (!latestBars.length) return;
+        renderBars(mergeBars(candleHistoryRef.current, latestBars), true);
+      } catch (error) {
+        if (cancelled || (error instanceof DOMException && error.name === "AbortError")) return;
+      }
+    }
+
     setCandleStatus("connecting");
-    void loadCandles();
-    const timer = window.setInterval(loadCandles, 5_000);
+    void loadInitialHistory().finally(() => {
+      if (!cancelled) timer = window.setInterval(refreshLatest, 5_000);
+    });
     return () => {
       cancelled = true;
       controller?.abort();
-      window.clearInterval(timer);
+      if (timer != null) window.clearInterval(timer);
     };
   }, [code, barSize, language]);
 
