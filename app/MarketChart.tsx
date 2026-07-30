@@ -259,7 +259,7 @@ export default function MarketChart({ name, code, price, entry, stop, target, la
       controller = new AbortController();
       const query = new URLSearchParams({
         interval: typeof barSize === "number" ? `${barSize}m` : "1d",
-        count: "500",
+        count: "200",
         _ts: String(Date.now()),
       });
       if (before) query.set("before", before);
