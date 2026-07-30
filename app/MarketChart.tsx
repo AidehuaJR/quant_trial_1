@@ -29,7 +29,10 @@ type TossCandle = {
   volume: string | number;
 };
 type TossCandlePage = {
-  result?: TossCandle[];
+  result?: TossCandle[] | {
+    candles?: TossCandle[];
+    nextBefore?: string | null;
+  };
   nextBefore?: string | null;
 };
 
@@ -68,6 +71,16 @@ function tossCandlesToBars(items: TossCandle[]): Bar[] {
       Number.isFinite(item.volume)
     )
     .sort((a, b) => a.time - b.time);
+}
+
+function unpackTossCandlePage(payload: TossCandlePage) {
+  if (Array.isArray(payload.result)) {
+    return { candles: payload.result, nextBefore: payload.nextBefore ?? undefined };
+  }
+  return {
+    candles: payload.result?.candles ?? [],
+    nextBefore: payload.result?.nextBefore ?? payload.nextBefore ?? undefined,
+  };
 }
 
 function mergeBars(existing: Bar[], incoming: Bar[]): Bar[] {
@@ -236,22 +249,16 @@ export default function MarketChart({ name, code, price, entry, stop, target, la
   }, [code, entry, stop, target, barSize, refreshKey, language]);
 
   useEffect(() => {
-    if (typeof barSize !== "number") {
-      setCandleStatus("idle");
-      setLiveCandleCount(0);
-      candleHistoryRef.current = [];
-      return;
-    }
-
     let cancelled = false;
     let timer: number | null = null;
     let controller: AbortController | null = null;
-    const historyStart = Math.floor((Date.now() - 14 * 24 * 60 * 60 * 1000) / 1000);
+    const historyDays = typeof barSize === "number" ? 14 : 400;
+    const historyStart = Math.floor((Date.now() - historyDays * 24 * 60 * 60 * 1000) / 1000);
 
     async function fetchCandlePage(before?: string) {
       controller = new AbortController();
       const query = new URLSearchParams({
-        interval: `${barSize}m`,
+        interval: typeof barSize === "number" ? `${barSize}m` : "1d",
         count: "500",
         _ts: String(Date.now()),
       });
@@ -297,12 +304,13 @@ export default function MarketChart({ name, code, price, entry, stop, target, la
 
         for (let page = 0; page < 80; page += 1) {
           const payload = await fetchCandlePage(before);
-          const pageBars = tossCandlesToBars(payload.result ?? []);
+          const pageData = unpackTossCandlePage(payload);
+          const pageBars = tossCandlesToBars(pageData.candles);
           if (!pageBars.length) break;
           bars = mergeBars(bars, pageBars);
 
           const oldest = bars[0]?.time ?? Number.POSITIVE_INFINITY;
-          const nextBefore = payload.nextBefore ?? undefined;
+          const nextBefore = pageData.nextBefore;
           if (oldest <= historyStart || !nextBefore || visitedCursors.has(nextBefore)) break;
           visitedCursors.add(nextBefore);
           before = nextBefore;
@@ -320,7 +328,7 @@ export default function MarketChart({ name, code, price, entry, stop, target, la
     async function refreshLatest() {
       try {
         const payload = await fetchCandlePage();
-        const latestBars = tossCandlesToBars(payload.result ?? []);
+        const latestBars = tossCandlesToBars(unpackTossCandlePage(payload).candles);
         if (!latestBars.length) return;
         renderBars(mergeBars(candleHistoryRef.current, latestBars), true);
       } catch (error) {
