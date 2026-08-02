@@ -90,6 +90,48 @@ function mergeBars(existing: Bar[], incoming: Bar[]): Bar[] {
   return Array.from(byTimestamp.values()).sort((a, b) => a.time - b.time);
 }
 
+const KST_OFFSET_SECONDS = 9 * 60 * 60;
+
+function periodStartTimestamp(time: UTCTimestamp, period: RangeKey): UTCTimestamp {
+  const shifted = new Date((Number(time) + KST_OFFSET_SECONDS) * 1000);
+  const year = shifted.getUTCFullYear();
+  const month = shifted.getUTCMonth();
+  let day = shifted.getUTCDate();
+
+  if (period === "1주") {
+    const daysSinceMonday = (shifted.getUTCDay() + 6) % 7;
+    day -= daysSinceMonday;
+  }
+
+  const bucketMonth = period === "1년" ? 0 : month;
+  const bucketDay = period === "1년" || period === "1개월" ? 1 : day;
+  return (Math.floor(Date.UTC(year, bucketMonth, bucketDay) / 1000) - KST_OFFSET_SECONDS) as UTCTimestamp;
+}
+
+function aggregateDailyBars(bars: Bar[], period: RangeKey): Bar[] {
+  if (period === "1일") return bars;
+
+  const buckets = new Map<number, Bar>();
+  for (const bar of bars) {
+    const time = periodStartTimestamp(bar.time, period);
+    const current = buckets.get(time);
+    if (!current) {
+      buckets.set(time, { ...bar, time });
+      continue;
+    }
+    current.high = Math.max(current.high, bar.high);
+    current.low = Math.min(current.low, bar.low);
+    current.close = bar.close;
+    current.volume += bar.volume;
+  }
+  return Array.from(buckets.values()).sort((a, b) => a.time - b.time);
+}
+
+function historyDaysFor(barSize: BarSize): number {
+  if (typeof barSize === "number") return 14;
+  return ({ "1일": 400, "1주": 1_825, "1개월": 3_650, "1년": 7_300 } as const)[barSize];
+}
+
 function sampleMinuteBars(base: number, code: string, minutes: Interval): Bar[] {
   const requestedDays = 30;
   const estimatedBarsPerDay = Math.max(1, Math.ceil(700 / minutes));
@@ -252,7 +294,7 @@ export default function MarketChart({ name, code, price, entry, stop, target, la
     let cancelled = false;
     let timer: number | null = null;
     let controller: AbortController | null = null;
-    const historyDays = typeof barSize === "number" ? 14 : 400;
+    const historyDays = historyDaysFor(barSize);
     const historyStart = Math.floor((Date.now() - historyDays * 24 * 60 * 60 * 1000) / 1000);
 
     async function fetchCandlePage(before?: string) {
@@ -274,15 +316,16 @@ export default function MarketChart({ name, code, price, entry, stop, target, la
     function renderBars(bars: Bar[], keepCurrentView = false) {
       if (cancelled || !bars.length || !candleRef.current || !volumeRef.current) return;
       candleHistoryRef.current = bars;
-      candleRef.current.setData(bars.map(({ time, open, high, low, close }) => ({ time, open, high, low, close })));
-      volumeRef.current.setData(bars.map(bar => ({
+      const displayBars = typeof barSize === "number" ? bars : aggregateDailyBars(bars, barSize);
+      candleRef.current.setData(displayBars.map(({ time, open, high, low, close }) => ({ time, open, high, low, close })));
+      volumeRef.current.setData(displayBars.map(bar => ({
         time: bar.time,
         value: bar.volume,
         color: bar.close >= bar.open ? "#ef9ba14a" : "#77a9df4d",
       })));
-      const latest = bars[bars.length - 1];
+      const latest = displayBars[displayBars.length - 1];
       liveBarRef.current = { time: latest.time, open: latest.open, high: latest.high, low: latest.low, close: latest.close };
-      setLiveCandleCount(bars.length);
+      setLiveCandleCount(displayBars.length);
       setCandleStatus("live");
       setLastUpdated(new Date().toLocaleTimeString(localeFor[language], {
         timeZone: "Asia/Seoul",
@@ -290,8 +333,8 @@ export default function MarketChart({ name, code, price, entry, stop, target, la
       }));
       if (!keepCurrentView) {
         chartRef.current?.timeScale().setVisibleLogicalRange({
-          from: Math.max(0, bars.length - 5.5),
-          to: bars.length - .25,
+          from: Math.max(0, displayBars.length - 5.5),
+          to: displayBars.length - .25,
         });
       }
     }
@@ -354,10 +397,10 @@ export default function MarketChart({ name, code, price, entry, stop, target, la
     const quoteTime = new Date(marketTimestamp).getTime();
     if (!Number.isFinite(quoteTime)) return;
 
-    const stepSeconds = typeof barSize === "number"
-      ? barSize * 60
-      : ({ "1일": 86_400, "1주": 604_800, "1개월": 2_592_000, "1년": 31_536_000 } as const)[barSize];
-    const bucket = Math.floor(quoteTime / 1000 / stepSeconds) * stepSeconds as UTCTimestamp;
+    const quoteTimestamp = Math.floor(quoteTime / 1000) as UTCTimestamp;
+    const bucket = typeof barSize === "number"
+      ? (Math.floor(Number(quoteTimestamp) / (barSize * 60)) * barSize * 60) as UTCTimestamp
+      : periodStartTimestamp(quoteTimestamp, barSize);
     const previous = liveBarRef.current;
     const next = previous?.time === bucket
       ? { time: bucket, open: previous.open, high: Math.max(previous.high, price), low: Math.min(previous.low, price), close: price }
