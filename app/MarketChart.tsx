@@ -57,6 +57,23 @@ type KrxHistoryResponse = {
 };
 
 const TOSS_GATEWAY_URL = "https://54-117-0-4.sslip.io";
+const TOSS_REFRESH_MS = 5_000;
+const TOSS_DEFAULT_COOLDOWN_MS = 60_000;
+const TOSS_HISTORY_PAGES = 4;
+
+type CachedBars = { bars: Bar[]; updatedAt: number };
+const minuteBarsCache = new Map<string, CachedBars>();
+let tossCooldownUntil = 0;
+
+class TossRateLimitError extends Error {
+  retryAfterMs: number;
+
+  constructor(retryAfterMs: number) {
+    super("Toss candles HTTP 429");
+    this.name = "TossRateLimitError";
+    this.retryAfterMs = retryAfterMs;
+  }
+}
 
 const ranges: RangeKey[] = ["1일", "1주", "1개월", "1년"];
 const intervals: Interval[] = [1, 3, 5, 10, 15, 30, 60, 120, 240];
@@ -253,6 +270,7 @@ export default function MarketChart({ name, code, price, entry, stop, target, la
   const [refreshing, setRefreshing] = useState(false);
   const [candleStatus, setCandleStatus] = useState<"idle" | "connecting" | "live" | "krx" | "fallback">("idle");
   const [chartError, setChartError] = useState<string | null>(null);
+  const [chartWarning, setChartWarning] = useState<string | null>(null);
   const [liveCandleCount, setLiveCandleCount] = useState(0);
   const [krxBasisDate, setKrxBasisDate] = useState<string | null>(null);
   function chooseRange(next: RangeKey) {
@@ -334,6 +352,7 @@ export default function MarketChart({ name, code, price, entry, stop, target, la
   useEffect(() => {
     let cancelled = false;
     let timer: number | null = null;
+    let refreshInFlight = false;
     let controller: AbortController | null = null;
     const historyDays = historyDaysFor(barSize);
     const historyStart = Math.floor((Date.now() - historyDays * 24 * 60 * 60 * 1000) / 1000);
@@ -357,6 +376,8 @@ export default function MarketChart({ name, code, price, entry, stop, target, la
     }
 
     async function fetchCandlePage(before?: string) {
+      const cooldownRemaining = tossCooldownUntil - Date.now();
+      if (cooldownRemaining > 0) throw new TossRateLimitError(cooldownRemaining);
       controller = new AbortController();
       const query = new URLSearchParams({
         interval: "1m",
@@ -368,6 +389,14 @@ export default function MarketChart({ name, code, price, entry, stop, target, la
         `${TOSS_GATEWAY_URL}/api/candles/${encodeURIComponent(code)}?${query.toString()}`,
         { cache: "no-store", signal: controller.signal }
       );
+      if (response.status === 429) {
+        const retryAfter = Number(response.headers.get("Retry-After"));
+        const retryAfterMs = Number.isFinite(retryAfter) && retryAfter > 0
+          ? retryAfter * 1_000
+          : TOSS_DEFAULT_COOLDOWN_MS;
+        tossCooldownUntil = Date.now() + retryAfterMs;
+        throw new TossRateLimitError(retryAfterMs);
+      }
       if (!response.ok) throw new Error(`Toss candles HTTP ${response.status}`);
       return await response.json() as TossCandlePage;
     }
@@ -420,19 +449,19 @@ export default function MarketChart({ name, code, price, entry, stop, target, la
 
           // KRX provides the official daily history. Toss fills the newest
           // trading session before the KRX daily cache has caught up.
-          let recentMinuteBars: Bar[] = [];
-          let before: string | undefined;
-          const visitedCursors = new Set<string>();
-          for (let page = 0; page < 10; page += 1) {
-            const tossPayload = await fetchCandlePage(before);
-            const pageData = unpackTossCandlePage(tossPayload);
-            const pageBars = tossCandlesToBars(pageData.candles);
-            if (!pageBars.length) break;
+          let recentMinuteBars = minuteBarsCache.get(code)?.bars ?? [];
+          try {
+            const tossPayload = await fetchCandlePage();
+            const pageBars = tossCandlesToBars(unpackTossCandlePage(tossPayload).candles);
             recentMinuteBars = mergeBars(recentMinuteBars, pageBars);
-            const nextBefore = pageData.nextBefore;
-            if (!nextBefore || visitedCursors.has(nextBefore)) break;
-            visitedCursors.add(nextBefore);
-            before = nextBefore;
+            if (recentMinuteBars.length) minuteBarsCache.set(code, { bars: recentMinuteBars, updatedAt: Date.now() });
+            setChartWarning(null);
+          } catch (error) {
+            if (error instanceof TossRateLimitError) {
+              setChartWarning(`Toss 요청 제한으로 마지막 데이터를 표시합니다. ${Math.ceil(error.retryAfterMs / 1000)}초 후 자동 재시도합니다.`);
+            } else {
+              throw error;
+            }
           }
           bars = mergeBars(bars, aggregateIntradayToDaily(recentMinuteBars));
           if (!bars.length) throw new Error("KRX cache returned no daily candles");
@@ -440,40 +469,54 @@ export default function MarketChart({ name, code, price, entry, stop, target, la
           return;
         }
 
-        let bars: Bar[] = [];
+        let bars: Bar[] = minuteBarsCache.get(code)?.bars ?? [];
+        if (bars.length) renderBars(bars);
         let before: string | undefined;
         const visitedCursors = new Set<string>();
 
-        const maxPages = barSize <= 1 ? 40 : barSize <= 5 ? 28 : barSize <= 30 ? 18 : 12;
+        // Reuse the shared raw 1-minute cache when changing candle sizes. A
+        // cold load is deliberately capped: dozens of back-to-back pages were
+        // exhausting Toss' quota before the five-second refresh even began.
+        const maxPages = bars.length ? 1 : TOSS_HISTORY_PAGES;
         for (let page = 0; page < maxPages; page += 1) {
-          const payload = await fetchCandlePage(before);
-          const pageData = unpackTossCandlePage(payload);
-          const pageBars = tossCandlesToBars(pageData.candles);
-          if (!pageBars.length) break;
-          bars = mergeBars(bars, pageBars);
+          try {
+            const payload = await fetchCandlePage(before);
+            const pageData = unpackTossCandlePage(payload);
+            const pageBars = tossCandlesToBars(pageData.candles);
+            if (!pageBars.length) break;
+            bars = mergeBars(bars, pageBars);
+            minuteBarsCache.set(code, { bars, updatedAt: Date.now() });
+            setChartWarning(null);
+            renderBars(bars, page > 0);
 
-          // Paint the newest candles immediately instead of waiting for every
-          // historical page to finish downloading.
-          if (page === 0) renderBars(bars);
-
-          const oldest = bars[0]?.time ?? Number.POSITIVE_INFINITY;
-          const nextBefore = pageData.nextBefore;
-          if (oldest <= historyStart || !nextBefore || visitedCursors.has(nextBefore)) break;
-          visitedCursors.add(nextBefore);
-          before = nextBefore;
+            const oldest = bars[0]?.time ?? Number.POSITIVE_INFINITY;
+            const nextBefore = pageData.nextBefore;
+            if (oldest <= historyStart || !nextBefore || visitedCursors.has(nextBefore)) break;
+            visitedCursors.add(nextBefore);
+            before = nextBefore;
+          } catch (error) {
+            if (error instanceof TossRateLimitError && bars.length) {
+              setChartWarning(`Toss 요청 제한으로 마지막 데이터를 표시합니다. ${Math.ceil(error.retryAfterMs / 1000)}초 후 자동 재시도합니다.`);
+              break;
+            }
+            throw error;
+          }
         }
 
         if (!bars.length) throw new Error("Toss returned no candles");
         renderBars(bars);
       } catch (error) {
         if (cancelled || (error instanceof DOMException && error.name === "AbortError")) return;
-        setCandleStatus("fallback");
-        setChartError(error instanceof Error ? error.message : "Market data could not be loaded");
-        setLiveCandleCount(0);
-        setKrxBasisDate(null);
-        candleHistoryRef.current = [];
-        candleRef.current?.setData([]);
-        volumeRef.current?.setData([]);
+        if (error instanceof TossRateLimitError && candleHistoryRef.current.length) {
+          setChartWarning(`Toss 요청 제한으로 마지막 데이터를 표시합니다. ${Math.ceil(error.retryAfterMs / 1000)}초 후 자동 재시도합니다.`);
+          return;
+        }
+        if (!candleHistoryRef.current.length) {
+          setCandleStatus("fallback");
+          setChartError(error instanceof Error ? error.message : "Market data could not be loaded");
+          setLiveCandleCount(0);
+          setKrxBasisDate(null);
+        }
       }
     }
 
@@ -485,28 +528,44 @@ export default function MarketChart({ name, code, price, entry, stop, target, la
           ? rawLatestBars
           : aggregateIntradayToDaily(rawLatestBars);
         if (!latestBars.length) return;
+        setChartWarning(null);
         renderBars(mergeBars(candleHistoryRef.current, latestBars), true);
       } catch (error) {
         if (cancelled || (error instanceof DOMException && error.name === "AbortError")) return;
+        if (error instanceof TossRateLimitError) {
+          setChartWarning(`Toss 요청 제한으로 마지막 데이터를 표시합니다. ${Math.ceil(error.retryAfterMs / 1000)}초 후 자동 재시도합니다.`);
+        }
       }
+    }
+
+    function scheduleRefresh(delay = TOSS_REFRESH_MS) {
+      if (cancelled) return;
+      timer = window.setTimeout(async () => {
+        if (document.visibilityState === "visible" && !refreshInFlight) {
+          refreshInFlight = true;
+          await refreshLatest();
+          refreshInFlight = false;
+        }
+        const remaining = Math.max(0, tossCooldownUntil - Date.now());
+        scheduleRefresh(remaining > 0 ? Math.max(remaining, TOSS_REFRESH_MS) : TOSS_REFRESH_MS);
+      }, delay);
     }
 
     setCandleStatus("connecting");
     setChartError(null);
+    setChartWarning(null);
     setLiveCandleCount(0);
     setKrxBasisDate(null);
     candleHistoryRef.current = [];
     candleRef.current?.setData([]);
     volumeRef.current?.setData([]);
     void loadInitialHistory().finally(() => {
-      if (!cancelled) {
-        timer = window.setInterval(refreshLatest, 5_000);
-      }
+      scheduleRefresh();
     });
     return () => {
       cancelled = true;
       controller?.abort();
-      if (timer != null) window.clearInterval(timer);
+      if (timer != null) window.clearTimeout(timer);
     };
   }, [code, barSize, language, refreshKey]);
 
@@ -544,6 +603,7 @@ export default function MarketChart({ name, code, price, entry, stop, target, la
       {shown ? <><b>{dateLabel(shown.time, typeof barSize === "number", language)}</b><span>{t("시")} <strong>{shown.open.toLocaleString(localeFor[language])}</strong></span><span>{t("고")} <strong className="rise">{shown.high.toLocaleString(localeFor[language])}</strong></span><span>{t("저")} <strong className="fall">{shown.low.toLocaleString(localeFor[language])}</strong></span><span>{t("종")} <strong>{shown.close.toLocaleString(localeFor[language])}</strong></span><span>{t("거래량")} <strong>{shown.volume.toLocaleString(localeFor[language])}</strong></span></> : <><b>{typeof barSize === "number" ? intervalLabel(language, barSize) : rangeLabel(language, barSize)}</b><span>{t("캔들 위에 마우스를 올리면 해당 시각의 상세 정보가 표시됩니다.")}</span></>}
     </div>
     {candleStatus === "connecting" && <div className="chart-data-notice">{t("시장 데이터를 불러오는 중입니다.")}</div>}
+    {chartWarning && candleStatus !== "fallback" && <div className="chart-data-notice">{chartWarning}</div>}
     {candleStatus === "fallback" && <div className="chart-data-notice error">{t("차트 데이터를 불러오지 못했습니다.")}{chartError ? ` (${chartError})` : ""}</div>}
     <div ref={container} className="chart-canvas" />
     <div className="chart-legend"><span className="entry">{t("매수 기준")} {entry.toLocaleString(localeFor[language])} KRW</span><span className="stop">{t("손절")} {stop.toLocaleString(localeFor[language])} KRW</span><span className="target">{t("익절")} {target.toLocaleString(localeFor[language])} KRW</span><small>{candleStatus === "krx" ? `KRX 공식 OHLCV ${liveCandleCount}개 · 일봉 기준` : candleStatus === "live" ? `Toss OHLCV ${liveCandleCount}개 · 5초 자동 갱신` : candleStatus === "fallback" ? t("차트 데이터 연결 실패") : dataSource === "live" ? "현재가는 실시간 · 캔들은 연결 확인 중" : t("시장 데이터 연결 대기 중")}</small></div>
