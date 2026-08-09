@@ -166,6 +166,26 @@ function periodStartTimestamp(time: UTCTimestamp, period: RangeKey): UTCTimestam
   return (Math.floor(Date.UTC(year, bucketMonth, bucketDay) / 1000) - KST_OFFSET_SECONDS) as UTCTimestamp;
 }
 
+function aggregateMinuteBars(bars: Bar[], minutes: Interval): Bar[] {
+  if (minutes === 1) return bars;
+
+  const bucketSeconds = minutes * 60;
+  const buckets = new Map<number, Bar>();
+  for (const bar of bars) {
+    const time = (Math.floor(Number(bar.time) / bucketSeconds) * bucketSeconds) as UTCTimestamp;
+    const current = buckets.get(time);
+    if (!current) {
+      buckets.set(time, { ...bar, time });
+      continue;
+    }
+    current.high = Math.max(current.high, bar.high);
+    current.low = Math.min(current.low, bar.low);
+    current.close = bar.close;
+    current.volume += bar.volume;
+  }
+  return Array.from(buckets.values()).sort((a, b) => a.time - b.time);
+}
+
 function aggregateDailyBars(bars: Bar[], period: RangeKey): Bar[] {
   if (period === "1일") return bars;
 
@@ -278,6 +298,7 @@ export default function MarketChart({ name, code, price, entry, stop, target, la
   const [lastUpdated, setLastUpdated] = useState("—");
   const [refreshing, setRefreshing] = useState(false);
   const [candleStatus, setCandleStatus] = useState<"idle" | "connecting" | "live" | "krx" | "fallback">("idle");
+  const [chartError, setChartError] = useState<string | null>(null);
   const [liveCandleCount, setLiveCandleCount] = useState(0);
   const [krxBasisDate, setKrxBasisDate] = useState<string | null>(null);
   function chooseRange(next: RangeKey) {
@@ -314,11 +335,7 @@ export default function MarketChart({ name, code, price, entry, stop, target, la
       handleScroll: { mouseWheel: true, pressedMouseMove: true, horzTouchDrag: true, vertTouchDrag: false },
       handleScale: { axisPressedMouseMove: true, mouseWheel: true, pinch: true },
     });
-    const bars = barSize === "1개월"
-      ? []
-      : typeof barSize === "number"
-        ? sampleMinuteBars(price, code, barSize)
-        : samplePeriodBars(price, code, barSize);
+    const bars: Bar[] = [];
     const candle = chart.addSeries(CandlestickSeries, { upColor: "#e95762", downColor: "#2875d0", borderVisible: false, wickUpColor: "#e95762", wickDownColor: "#2875d0", priceFormat: { type: "price", precision: 0, minMove: 100 } });
     chartRef.current = chart;
     candleRef.current = candle;
@@ -364,7 +381,7 @@ export default function MarketChart({ name, code, price, entry, stop, target, la
       controller = new AbortController();
       const end = new Date();
       const start = new Date(end);
-      start.setUTCDate(start.getUTCDate() - 120);
+      start.setUTCDate(start.getUTCDate() - historyDays);
       const query = new URLSearchParams({
         start_date: kstDateParam(start),
         end_date: kstDateParam(end),
@@ -381,7 +398,7 @@ export default function MarketChart({ name, code, price, entry, stop, target, la
     async function fetchCandlePage(before?: string) {
       controller = new AbortController();
       const query = new URLSearchParams({
-        interval: typeof barSize === "number" ? `${barSize}m` : "1d",
+        interval: "1m",
         count: "200",
         _ts: String(Date.now()),
       });
@@ -397,11 +414,9 @@ export default function MarketChart({ name, code, price, entry, stop, target, la
     function renderBars(bars: Bar[], keepCurrentView = false) {
       if (cancelled || !bars.length || !candleRef.current || !volumeRef.current) return;
       candleHistoryRef.current = bars;
-      const displayBars = barSize === "1개월"
-        ? bars
-        : typeof barSize === "number"
-          ? bars
-          : aggregateDailyBars(bars, barSize);
+      const displayBars = typeof barSize === "number"
+        ? aggregateMinuteBars(bars, barSize)
+        : aggregateDailyBars(bars, barSize);
       candleRef.current.setData(displayBars.map(({ time, open, high, low, close }) => ({ time, open, high, low, close })));
       volumeRef.current.setData(displayBars.map(bar => ({
         time: bar.time,
@@ -411,8 +426,9 @@ export default function MarketChart({ name, code, price, entry, stop, target, la
       const latest = displayBars[displayBars.length - 1];
       liveBarRef.current = { time: latest.time, open: latest.open, high: latest.high, low: latest.low, close: latest.close };
       setLiveCandleCount(displayBars.length);
-      setCandleStatus(barSize === "1개월" ? "krx" : "live");
-      if (barSize === "1개월") {
+      setCandleStatus(typeof barSize === "number" ? "live" : "krx");
+      setChartError(null);
+      if (typeof barSize !== "number") {
         const latestDate = new Date(Number(latest.time) * 1000);
         setKrxBasisDate(new Intl.DateTimeFormat(localeFor[language], {
           timeZone: "Asia/Seoul",
@@ -437,7 +453,7 @@ export default function MarketChart({ name, code, price, entry, stop, target, la
 
     async function loadInitialHistory() {
       try {
-        if (barSize === "1개월") {
+        if (typeof barSize !== "number") {
           const payload = await fetchKrxHistory();
           const bars = krxCandlesToBars(payload.result ?? []);
           if (!bars.length) throw new Error("KRX cache returned no daily candles");
@@ -468,8 +484,12 @@ export default function MarketChart({ name, code, price, entry, stop, target, la
       } catch (error) {
         if (cancelled || (error instanceof DOMException && error.name === "AbortError")) return;
         setCandleStatus("fallback");
+        setChartError(error instanceof Error ? error.message : "Market data could not be loaded");
         setLiveCandleCount(0);
         setKrxBasisDate(null);
+        candleHistoryRef.current = [];
+        candleRef.current?.setData([]);
+        volumeRef.current?.setData([]);
       }
     }
 
@@ -485,8 +505,14 @@ export default function MarketChart({ name, code, price, entry, stop, target, la
     }
 
     setCandleStatus("connecting");
+    setChartError(null);
+    setLiveCandleCount(0);
+    setKrxBasisDate(null);
+    candleHistoryRef.current = [];
+    candleRef.current?.setData([]);
+    volumeRef.current?.setData([]);
     void loadInitialHistory().finally(() => {
-      if (!cancelled && barSize !== "1개월") {
+      if (!cancelled && typeof barSize === "number") {
         timer = window.setInterval(refreshLatest, 5_000);
       }
     });
@@ -530,7 +556,9 @@ export default function MarketChart({ name, code, price, entry, stop, target, la
     <div className="ohlc-strip">
       {shown ? <><b>{dateLabel(shown.time, typeof barSize === "number", language)}</b><span>{t("시")} <strong>{shown.open.toLocaleString(localeFor[language])}</strong></span><span>{t("고")} <strong className="rise">{shown.high.toLocaleString(localeFor[language])}</strong></span><span>{t("저")} <strong className="fall">{shown.low.toLocaleString(localeFor[language])}</strong></span><span>{t("종")} <strong>{shown.close.toLocaleString(localeFor[language])}</strong></span><span>{t("거래량")} <strong>{shown.volume.toLocaleString(localeFor[language])}</strong></span></> : <><b>{typeof barSize === "number" ? intervalLabel(language, barSize) : rangeLabel(language, barSize)}</b><span>{t("캔들 위에 마우스를 올리면 해당 시각의 상세 정보가 표시됩니다.")}</span></>}
     </div>
+    {candleStatus === "connecting" && <div className="chart-data-notice">{t("시장 데이터를 불러오는 중입니다.")}</div>}
+    {candleStatus === "fallback" && <div className="chart-data-notice error">{t("차트 데이터를 불러오지 못했습니다.")}{chartError ? ` (${chartError})` : ""}</div>}
     <div ref={container} className="chart-canvas" />
-    <div className="chart-legend"><span className="entry">{t("매수 기준")} {entry.toLocaleString(localeFor[language])} KRW</span><span className="stop">{t("손절")} {stop.toLocaleString(localeFor[language])} KRW</span><span className="target">{t("익절")} {target.toLocaleString(localeFor[language])} KRW</span><small>{candleStatus === "krx" ? `KRX 공식 OHLCV ${liveCandleCount}개 · 일봉 기준` : candleStatus === "live" ? `Toss OHLCV ${liveCandleCount}개 · 5초 자동 갱신` : dataSource === "live" ? "현재가는 실시간 · 캔들은 연결 확인 중" : t("데이터 연결 전 UI·분석 흐름 검토용입니다.")}</small></div>
+    <div className="chart-legend"><span className="entry">{t("매수 기준")} {entry.toLocaleString(localeFor[language])} KRW</span><span className="stop">{t("손절")} {stop.toLocaleString(localeFor[language])} KRW</span><span className="target">{t("익절")} {target.toLocaleString(localeFor[language])} KRW</span><small>{candleStatus === "krx" ? `KRX 공식 OHLCV ${liveCandleCount}개 · 일봉 기준` : candleStatus === "live" ? `Toss OHLCV ${liveCandleCount}개 · 5초 자동 갱신` : candleStatus === "fallback" ? t("차트 데이터 연결 실패") : dataSource === "live" ? "현재가는 실시간 · 캔들은 연결 확인 중" : t("시장 데이터 연결 대기 중")}</small></div>
   </article>;
 }
