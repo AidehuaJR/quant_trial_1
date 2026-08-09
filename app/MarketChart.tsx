@@ -70,7 +70,6 @@ const chartCopy: Record<Language, Record<string,string>> = {
 function chartText(language: Language, key: string) { return chartCopy[language][key] ?? key; }
 function intervalLabel(language: Language, minutes: Interval) { return minutes === 1440 ? rangeLabel(language, "1일") : `${minutes}${chartText(language,"분")}`; }
 
-function roundPrice(value: number) { return Math.round(value / 100) * 100; }
 
 function tossCandlesToBars(items: TossCandle[]): Bar[] {
   return items
@@ -205,78 +204,33 @@ function aggregateDailyBars(bars: Bar[], period: RangeKey): Bar[] {
   return Array.from(buckets.values()).sort((a, b) => a.time - b.time);
 }
 
+function aggregateIntradayToDaily(bars: Bar[]): Bar[] {
+  const buckets = new Map<number, Bar>();
+  for (const bar of bars) {
+    const kst = new Date((Number(bar.time) + KST_OFFSET_SECONDS) * 1000);
+    const time = Math.floor(Date.UTC(
+      kst.getUTCFullYear(),
+      kst.getUTCMonth(),
+      kst.getUTCDate(),
+      6,
+      30,
+    ) / 1000) as UTCTimestamp;
+    const current = buckets.get(time);
+    if (!current) {
+      buckets.set(time, { ...bar, time });
+      continue;
+    }
+    current.high = Math.max(current.high, bar.high);
+    current.low = Math.min(current.low, bar.low);
+    current.close = bar.close;
+    current.volume += bar.volume;
+  }
+  return Array.from(buckets.values()).sort((a, b) => a.time - b.time);
+}
+
 function historyDaysFor(barSize: BarSize): number {
   if (typeof barSize === "number") return 14;
   return ({ "1일": 400, "1주": 1_825, "1개월": 3_650, "1년": 7_300 } as const)[barSize];
-}
-
-function sampleMinuteBars(base: number, code: string, minutes: Interval): Bar[] {
-  const requestedDays = 30;
-  const estimatedBarsPerDay = Math.max(1, Math.ceil(700 / minutes));
-  const loadedDays = Math.min(requestedDays, Math.max(5, Math.floor(12000 / estimatedBarsPerDay)));
-  const seed = Number(code.slice(-3)) || 41;
-  // Fixed Friday snapshot: includes NXT after-market and remains visible on weekends.
-  const end = new Date("2026-07-17T11:00:00Z"); // 20:00 KST
-  const result: Bar[] = [];
-  let close = base * .96;
-  let index = 0;
-
-  if (minutes <= 1440) {
-    for (let dayOffset = loadedDays - 1; dayOffset >= 0; dayOffset--) {
-      const session = new Date(end);
-      session.setUTCDate(end.getUTCDate() - dayOffset);
-      if (session.getUTCDay() === 0 || session.getUTCDay() === 6) continue;
-      const y = session.getUTCFullYear(), m = session.getUTCMonth(), d = session.getUTCDate();
-      const segments = minutes === 1440 ? [
-        { start: Date.UTC(y, m, d, 0, 0), duration: 0, name: "일봉" },
-      ] : [
-        { start: Date.UTC(y, m, d - 1, 23, 0), duration: 50, name: "NXT 프리" },      // 08:00–08:50 KST
-        { start: Date.UTC(y, m, d, 0, 0), duration: 390, name: "정규장" },            // 09:00–15:30 KST
-        { start: Date.UTC(y, m, d, 6, 40), duration: 260, name: "NXT 애프터" },       // 15:40–20:00 KST
-      ];
-      for (const segment of segments) {
-        for (let minute = 0; minute <= segment.duration; minute += minutes) {
-          const time = new Date(segment.start + minute * 60_000);
-          const wave = Math.sin((index + seed) * .47) * .0035 + Math.cos((index + seed) * .17) * .002;
-          const drift = (base - close) * .018;
-          const open = close;
-          close = Math.max(base * .82, close * (1 + wave) + drift);
-          const high = Math.max(open, close) * (1.002 + Math.abs(Math.sin(index)) * .0015);
-          const low = Math.min(open, close) * (0.998 - Math.abs(Math.cos(index)) * .0013);
-          result.push({ time: Math.floor(time.getTime()/1000) as UTCTimestamp, open: roundPrice(open), high: roundPrice(high), low: roundPrice(low), close: roundPrice(close), volume: Math.round(85000 + Math.abs(Math.sin(index*.61))*420000) });
-          index++;
-        }
-      }
-    }
-  }
-  if (result.length) result[result.length - 1].close = base;
-  return result;
-}
-
-function samplePeriodBars(base: number, code: string, period: RangeKey): Bar[] {
-  const stepDays: Record<RangeKey, number> = { "1일": 1, "1주": 7, "1개월": 30, "1년": 365 };
-  const counts: Record<RangeKey, number> = { "1일": 120, "1주": 104, "1개월": 84, "1년": 20 };
-  const seed = Number(code.slice(-3)) || 41;
-  const end = new Date("2026-07-17T06:30:00Z");
-  const result: Bar[] = [];
-  let close = base * (period === "1년" ? .45 : period === "1개월" ? .68 : period === "1주" ? .82 : .92);
-  let index = 0;
-
-  for (let offset = counts[period] - 1; offset >= 0; offset--) {
-    const point = new Date(end);
-    point.setUTCDate(end.getUTCDate() - offset * stepDays[period]);
-    if (period === "1일" && (point.getUTCDay() === 0 || point.getUTCDay() === 6)) continue;
-    const wave = Math.sin((index + seed) * .43) * .022 + Math.cos((index + seed) * .16) * .011;
-    const drift = (base - close) * .025;
-    const open = close;
-    close = Math.max(base * .32, close * (1 + wave) + drift);
-    const high = Math.max(open, close) * (1.008 + Math.abs(Math.sin(index)) * .008);
-    const low = Math.min(open, close) * (0.992 - Math.abs(Math.cos(index)) * .007);
-    result.push({ time: Math.floor(point.getTime() / 1000) as UTCTimestamp, open: roundPrice(open), high: roundPrice(high), low: roundPrice(low), close: roundPrice(close), volume: Math.round(420000 + Math.abs(Math.sin(index * .61)) * 2800000) });
-    index++;
-  }
-  if (result.length) result[result.length - 1].close = base;
-  return result;
 }
 
 function dateLabel(time: UTCTimestamp, intraday: boolean, language: Language) {
@@ -368,7 +322,14 @@ export default function MarketChart({ name, code, price, entry, stop, target, la
       candleHistoryRef.current = [];
       chart.remove();
     };
-  }, [code, entry, stop, target, barSize, refreshKey, language]);
+  }, [code, entry, stop, target, language]);
+
+  useEffect(() => {
+    chartRef.current?.timeScale().applyOptions({
+      timeVisible: typeof barSize === "number",
+      secondsVisible: false,
+    });
+  }, [barSize]);
 
   useEffect(() => {
     let cancelled = false;
@@ -455,7 +416,25 @@ export default function MarketChart({ name, code, price, entry, stop, target, la
       try {
         if (typeof barSize !== "number") {
           const payload = await fetchKrxHistory();
-          const bars = krxCandlesToBars(payload.result ?? []);
+          let bars = krxCandlesToBars(payload.result ?? []);
+
+          // KRX provides the official daily history. Toss fills the newest
+          // trading session before the KRX daily cache has caught up.
+          let recentMinuteBars: Bar[] = [];
+          let before: string | undefined;
+          const visitedCursors = new Set<string>();
+          for (let page = 0; page < 10; page += 1) {
+            const tossPayload = await fetchCandlePage(before);
+            const pageData = unpackTossCandlePage(tossPayload);
+            const pageBars = tossCandlesToBars(pageData.candles);
+            if (!pageBars.length) break;
+            recentMinuteBars = mergeBars(recentMinuteBars, pageBars);
+            const nextBefore = pageData.nextBefore;
+            if (!nextBefore || visitedCursors.has(nextBefore)) break;
+            visitedCursors.add(nextBefore);
+            before = nextBefore;
+          }
+          bars = mergeBars(bars, aggregateIntradayToDaily(recentMinuteBars));
           if (!bars.length) throw new Error("KRX cache returned no daily candles");
           renderBars(bars);
           return;
@@ -465,12 +444,17 @@ export default function MarketChart({ name, code, price, entry, stop, target, la
         let before: string | undefined;
         const visitedCursors = new Set<string>();
 
-        for (let page = 0; page < 80; page += 1) {
+        const maxPages = barSize <= 1 ? 40 : barSize <= 5 ? 28 : barSize <= 30 ? 18 : 12;
+        for (let page = 0; page < maxPages; page += 1) {
           const payload = await fetchCandlePage(before);
           const pageData = unpackTossCandlePage(payload);
           const pageBars = tossCandlesToBars(pageData.candles);
           if (!pageBars.length) break;
           bars = mergeBars(bars, pageBars);
+
+          // Paint the newest candles immediately instead of waiting for every
+          // historical page to finish downloading.
+          if (page === 0) renderBars(bars);
 
           const oldest = bars[0]?.time ?? Number.POSITIVE_INFINITY;
           const nextBefore = pageData.nextBefore;
@@ -496,7 +480,10 @@ export default function MarketChart({ name, code, price, entry, stop, target, la
     async function refreshLatest() {
       try {
         const payload = await fetchCandlePage();
-        const latestBars = tossCandlesToBars(unpackTossCandlePage(payload).candles);
+        const rawLatestBars = tossCandlesToBars(unpackTossCandlePage(payload).candles);
+        const latestBars = typeof barSize === "number"
+          ? rawLatestBars
+          : aggregateIntradayToDaily(rawLatestBars);
         if (!latestBars.length) return;
         renderBars(mergeBars(candleHistoryRef.current, latestBars), true);
       } catch (error) {
@@ -512,7 +499,7 @@ export default function MarketChart({ name, code, price, entry, stop, target, la
     candleRef.current?.setData([]);
     volumeRef.current?.setData([]);
     void loadInitialHistory().finally(() => {
-      if (!cancelled && typeof barSize === "number") {
+      if (!cancelled) {
         timer = window.setInterval(refreshLatest, 5_000);
       }
     });
@@ -521,7 +508,7 @@ export default function MarketChart({ name, code, price, entry, stop, target, la
       controller?.abort();
       if (timer != null) window.clearInterval(timer);
     };
-  }, [code, barSize, language]);
+  }, [code, barSize, language, refreshKey]);
 
   useEffect(() => {
     const candle = candleRef.current;
@@ -547,8 +534,8 @@ export default function MarketChart({ name, code, price, entry, stop, target, la
 
   const shown = detail;
   return <article className="market-chart panel">
-    <div className="chart-head"><div><span className="sample-pill">{candleStatus === "krx" ? "KRX DAILY HISTORY" : candleStatus === "live" ? "TOSS LIVE CANDLES" : dataSource === "live" ? "TOSS LIVE PRICE" : dataSource === "connecting" || candleStatus === "connecting" ? "CONNECTING TO MARKET DATA" : "INTERACTIVE SAMPLE"}</span><h2>{name} <small>{code}</small></h2><strong>{price.toLocaleString(localeFor[language])} {language === "ko" ? "원" : "KRW"}</strong><em>{candleStatus === "krx" ? `KRX · 실제 일봉 ${liveCandleCount}개` : candleStatus === "live" ? `토스증권 Open API · 실시간 봉 ${liveCandleCount}개` : dataSource === "live" ? "토스증권 Open API 현재가" : t("사용자 제공 기준값 · 실시간 아님")}</em></div><div><div className="chart-tools"><button className={`refresh-chart ${refreshing ? "loading" : ""}`} onClick={refreshChart} disabled={refreshing} aria-label={t("새로고침")}><span>↻</span>{refreshing ? t("불러오는 중") : t("새로고침")}</button></div><p className="interval-label"><i className="connection-dot"/> {t("화면 갱신")} {lastUpdated} · {t("휠로 확대 · 좌우 드래그로 이전 거래일 보기")}</p></div></div>
-    <div className="data-clock"><span><i/>{t("시세 기준")}</span><b>{candleStatus === "krx" && krxBasisDate ? `KRX 기준일 ${krxBasisDate}` : marketTimestamp ? new Date(marketTimestamp).toLocaleString(localeFor[language], { timeZone: "Asia/Seoul", hour12: false }) : "데모 데이터"}</b><em>{candleStatus === "krx" ? "KRX 공식 일봉 캐시 · Toss 현재가는 별도 갱신" : candleStatus === "live" ? "AWS 보안 게이트웨이 · 5초마다 캔들 갱신" : dataSource === "live" ? "현재가 연결됨 · 캔들 연결 확인 중" : "시장 데이터 연결을 확인해 주세요"}</em></div>
+    <div className="chart-head"><div><span className="sample-pill">{candleStatus === "krx" ? "KRX + TOSS HISTORY" : candleStatus === "live" ? "TOSS LIVE CANDLES" : dataSource === "live" ? "TOSS LIVE PRICE" : dataSource === "connecting" || candleStatus === "connecting" ? "CONNECTING TO MARKET DATA" : "MARKET DATA UNAVAILABLE"}</span><h2>{name} <small>{code}</small></h2><strong>{price.toLocaleString(localeFor[language])} {language === "ko" ? "원" : "KRW"}</strong><em>{candleStatus === "krx" ? `KRX 일봉 + Toss 최신 거래일 · ${liveCandleCount}개` : candleStatus === "live" ? `토스증권 Open API · 실시간 봉 ${liveCandleCount}개` : dataSource === "live" ? "토스증권 Open API 현재가" : t("시장 데이터를 불러올 수 없습니다")}</em></div><div><div className="chart-tools"><button className={`refresh-chart ${refreshing ? "loading" : ""}`} onClick={refreshChart} disabled={refreshing} aria-label={t("새로고침")}><span>↻</span>{refreshing ? t("불러오는 중") : t("새로고침")}</button></div><p className="interval-label"><i className="connection-dot"/> {t("화면 갱신")} {lastUpdated} · {t("휠로 확대 · 좌우 드래그로 이전 거래일 보기")}</p></div></div>
+    <div className="data-clock"><span><i/>{t("시세 기준")}</span><b>{candleStatus === "krx" && krxBasisDate ? `최신 거래일 ${krxBasisDate}` : marketTimestamp ? new Date(marketTimestamp).toLocaleString(localeFor[language], { timeZone: "Asia/Seoul", hour12: false }) : "연결 대기"}</b><em>{candleStatus === "krx" ? "KRX 공식 일봉 + Toss 최신 세션 · 5초마다 갱신" : candleStatus === "live" ? "AWS 보안 게이트웨이 · 5초마다 캔들 갱신" : dataSource === "live" ? "현재가 연결됨 · 캔들 연결 확인 중" : "시장 데이터 연결을 확인해 주세요"}</em></div>
     <div className="chart-control-bar">
       <label className={`minute-dropdown ${typeof barSize === "number" ? "active" : ""}`}><span>{intervalLabel(language,minuteInterval)}</span><select value={minuteInterval} onChange={event=>chooseInterval(Number(event.target.value) as Interval)} aria-label="Minute candle length">{intervals.map(item=><option key={item} value={item}>{intervalLabel(language,item)}</option>)}</select><i aria-hidden="true" /></label>
       <div className="range-bar" aria-label="Candle length">{ranges.map(item=><button type="button" key={item} className={barSize === item ? "active" : ""} onClick={()=>chooseRange(item)}>{rangeLabel(language,item)}</button>)}</div>
