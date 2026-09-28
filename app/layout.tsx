@@ -19,8 +19,9 @@ export const metadata: Metadata = {
     "codex-preview": "development",
   },
   icons: {
-    icon: "/favicon.svg",
-    shortcut: "/favicon.svg",
+    // Relative paths so GitHub Pages basePath (/quant_trial_1) resolves correctly.
+    icon: "favicon.svg",
+    shortcut: "favicon.svg",
   },
 };
 
