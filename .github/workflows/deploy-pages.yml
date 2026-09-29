@@ -41,10 +41,7 @@ jobs:
           fi
 
       - name: Build static site for GitHub Pages
-        run: npx next build
-        env:
-          GITHUB_PAGES: "true"
-          NEXT_TELEMETRY_DISABLED: "1"
+        run: npm run build:pages
 
       - name: Verify static export output
         run: |
